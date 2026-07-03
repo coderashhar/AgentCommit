@@ -1,0 +1,33 @@
+# AgentCommit Backend Dependencies
+
+# Web framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+
+# Settings
+pydantic-settings==2.9.1
+
+# Database
+sqlalchemy[asyncio]==2.0.41
+asyncpg==0.30.0
+alembic==1.15.2
+
+# Redis
+redis[hiredis]==6.2.0
+
+# Google ADK + Gemini
+google-adk==1.5.0
+
+# GitHub API
+httpx==0.28.1
+
+# MCP
+mcp==1.9.4
+
+# Auth
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+
+# Utilities
+python-dotenv==1.1.0
