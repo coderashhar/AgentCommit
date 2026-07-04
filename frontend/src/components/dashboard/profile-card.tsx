@@ -1,7 +1,6 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -11,7 +10,6 @@ import {
   Users,
   BookOpen,
   GitFork,
-  Star,
 } from "lucide-react";
 import type { UserProfile } from "@/types";
 

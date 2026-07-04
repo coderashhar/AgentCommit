@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Star, GitFork, ExternalLink } from "lucide-react";
+import { Star, ExternalLink } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
 import type { RecommendedRepo } from "@/types";
 

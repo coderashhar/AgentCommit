@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/shared/github-icon";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
-import { signIn, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { signInWithGitHub } from "@/lib/auth-client";
 
 export function Hero() {
   const { status } = useSession();
@@ -15,7 +16,7 @@ export function Hero() {
     if (status === "authenticated") {
       router.push("/dashboard");
     } else {
-      signIn("github", { callbackUrl: "/dashboard" });
+      void signInWithGitHub();
     }
   };
 

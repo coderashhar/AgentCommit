@@ -19,6 +19,15 @@ const difficultyColors: Record<string, string> = {
   hard: "bg-red-500/10 text-red-500 border-red-500/20",
 };
 
+function issueDetailHref(issue: DiscoveredIssue): string {
+  const [owner, repo] = issue.repo_full_name.split("/");
+  if (!owner || !repo) {
+    return issue.html_url || "#";
+  }
+
+  return `/issue/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${issue.number}`;
+}
+
 export function IssueList({ issues, isLoading }: IssueListProps) {
   if (isLoading) {
     return (
@@ -66,7 +75,7 @@ export function IssueList({ issues, isLoading }: IssueListProps) {
         {issues.map((issue) => (
           <Link
             key={`${issue.repo_full_name}#${issue.number}`}
-            href={`/issue/${encodeURIComponent(issue.repo_full_name)}/${issue.number}`}
+            href={issueDetailHref(issue)}
             className="block p-4 rounded-lg border border-border/50 hover:border-primary/30 hover:bg-muted/50 transition-all group"
           >
             <div className="flex items-start justify-between gap-2">
