@@ -8,9 +8,7 @@ import { Navbar } from "@/components/shared/navbar";
 import { Footer } from "@/components/shared/footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   Bot,
@@ -38,7 +36,7 @@ export default function IssueDetailPage() {
   const segments = params.id as string[];
   const owner = segments?.[0] ?? "";
   const repo = segments?.[1] ?? "";
-  const issueNumber = parseInt(segments?.[2] ?? "0", 10);
+  const issueNumber = Number.parseInt(segments?.[2] ?? "0", 10);
 
   useEffect(() => {
     if (status === "unauthenticated") {

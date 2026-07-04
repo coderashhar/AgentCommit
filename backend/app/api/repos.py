@@ -19,7 +19,7 @@ router = APIRouter()
 @router.post("/recommend")
 async def recommend_repos(
     request: RepoRecommendationRequest,
-    authorization: str = Header(..., description="GitHub access token"),
+    authorization: str = Header("", description="GitHub access token"),
 ) -> JSONResponse:
     """Recommend open source repositories based on user's skill profile.
 

@@ -212,3 +212,64 @@ This document records the development journey of AgentCommit. Every completed fe
 #### Known Issues / Follow-up Tasks
 - Real dashboard analysis still requires valid GitHub OAuth credentials and a reachable GitHub API.
 - Gemini-powered agent responses require a valid Google API key; otherwise the GitHub-backed fallback path is used.
+
+---
+
+## 2026-07-05 - Frontend Runtime Repair and Verification
+
+#### Completed
+- Fixed the Auth.js `MissingSecret` crash that sent GitHub sign-in clicks to `/api/auth/error`.
+- Added a local development auth secret fallback while keeping production dependent on a real `AUTH_SECRET`.
+- Made GitHub sign-in buttons check provider availability and show a clear local setup alert when OAuth credentials are missing.
+- Added a frontend `.env.example` and README setup note for Auth.js/GitHub OAuth variables.
+- Restored the missing frontend library layer for API calls, Auth.js/NextAuth configuration, and shared UI/date/format helpers.
+- Narrowed the Python `lib/` ignore rule so `frontend/src/lib` can be tracked by Git.
+- Migrated the protected route boundary from deprecated `middleware.ts` to Next 16 `proxy.ts`.
+- Fixed the dashboard React lint failure by deriving the session-backed profile instead of synchronously setting state in an effect.
+- Fixed issue detail links so `owner/repo/number` routes are generated as real catch-all route segments.
+- Removed stale unused imports from dashboard, issue detail, profile card, and repository recommendation components.
+- Hardened protected backend endpoints so missing or malformed authorization headers return 401 instead of request-validation 422.
+- Added an npm PostCSS override to clear the Next.js transitive audit finding without downgrading Next.
+
+#### Files Added
+- `frontend/.env.example`
+- `frontend/src/lib/auth-client.ts`
+- `frontend/src/lib/api.ts`
+- `frontend/src/lib/auth.ts`
+- `frontend/src/lib/utils.ts`
+- `frontend/src/proxy.ts`
+
+#### Files Modified
+- `backend/app/api/github_auth.py`
+- `backend/app/api/issues.py`
+- `backend/app/api/profile.py`
+- `backend/app/api/repos.py`
+- `.gitignore`
+- `README.md`
+- `frontend/.gitignore`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `frontend/src/app/dashboard/page.tsx`
+- `frontend/src/app/issue/[...id]/page.tsx`
+- `frontend/src/components/dashboard/issue-list.tsx`
+- `frontend/src/components/dashboard/profile-card.tsx`
+- `frontend/src/components/dashboard/repo-recommendations.tsx`
+- `frontend/src/components/landing/cta.tsx`
+- `frontend/src/components/landing/hero.tsx`
+- `frontend/src/components/shared/navbar.tsx`
+- `frontend/src/lib/auth.ts`
+- `PROJECT_HISTORY.md`
+
+#### Files Removed
+- `frontend/src/middleware.ts`
+
+#### Verification
+- `npm run lint`
+- `npx tsc --noEmit`
+- `npm run build`
+- `npm audit --audit-level=moderate`
+- `python -m compileall app`
+- FastAPI health and missing-auth smoke tests
+
+#### Known Issues / Follow-up Tasks
+- Running the full authenticated dashboard still requires real GitHub OAuth credentials and a valid GitHub access token.

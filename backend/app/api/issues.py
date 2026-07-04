@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("/discover")
 async def discover_issues(
     request: IssueDiscoveryRequest,
-    authorization: str = Header(..., description="GitHub access token"),
+    authorization: str = Header("", description="GitHub access token"),
 ) -> JSONResponse:
     """Discover beginner-friendly issues matching the user's skills.
 
@@ -49,7 +49,7 @@ async def discover_issues(
 @router.post("/explain")
 async def explain_issue(
     request: IssueExplanationRequest,
-    authorization: str = Header(..., description="GitHub access token"),
+    authorization: str = Header("", description="GitHub access token"),
 ) -> JSONResponse:
     """Generate an AI-powered explanation of a GitHub issue.
 

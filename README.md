@@ -85,6 +85,9 @@ cd AgentCommit
 ```bash
 cp .env.example .env
 # Edit .env with your credentials
+
+cp frontend/.env.example frontend/.env.local
+# Edit .env.local with AUTH_SECRET, AUTH_GITHUB_ID, and AUTH_GITHUB_SECRET
 ```
 
 ### 3. Start Database Services

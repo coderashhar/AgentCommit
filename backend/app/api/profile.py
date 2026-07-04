@@ -16,7 +16,7 @@ router = APIRouter()
 @router.post("/analyze")
 async def analyze_profile(
     request: ProfileAnalysisRequest,
-    authorization: str = Header(..., description="GitHub access token"),
+    authorization: str = Header("", description="GitHub access token"),
 ) -> JSONResponse:
     """Analyze a GitHub user's profile to extract skills, experience, and interests.
 

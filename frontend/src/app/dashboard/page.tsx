@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/shared/navbar";
@@ -9,7 +9,6 @@ import { ProfileCard } from "@/components/dashboard/profile-card";
 import { SkillBadges } from "@/components/dashboard/skill-badges";
 import { RepoRecommendations } from "@/components/dashboard/repo-recommendations";
 import { IssueList } from "@/components/dashboard/issue-list";
-import { Badge } from "@/components/ui/badge";
 import { Bot, Loader2 } from "lucide-react";
 import { analyzeProfile, getRecommendedRepos, discoverIssues } from "@/lib/api";
 import type {
@@ -25,12 +24,31 @@ export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysis | null>(null);
   const [repos, setRepos] = useState<RecommendedRepo[]>([]);
   const [issues, setIssues] = useState<DiscoveredIssue[]>([]);
   const [agentStep, setAgentStep] = useState<AgentStep>("idle");
   const [error, setError] = useState<string | null>(null);
+
+  const userProfile = useMemo<UserProfile | null>(() => {
+    if (!session?.user) return null;
+
+    const username = profileAnalysis?.username ?? session.username ?? session.user.name ?? "";
+
+    return {
+      username,
+      name: session.user.name ?? username,
+      avatar_url: session.user.image ?? "",
+      bio: "",
+      public_repos: 0,
+      followers: 0,
+      following: 0,
+      html_url: username ? `https://github.com/${username}` : "",
+      company: null,
+      location: null,
+      blog: null,
+    };
+  }, [profileAnalysis?.username, session]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -38,25 +56,6 @@ export default function DashboardPage() {
       router.push("/");
     }
   }, [status, router]);
-
-  // Build user profile from session data
-  useEffect(() => {
-    if (session?.user) {
-      setUserProfile({
-        username: session.username ?? session.user.name ?? "",
-        name: session.user.name ?? "",
-        avatar_url: session.user.image ?? "",
-        bio: "",
-        public_repos: 0,
-        followers: 0,
-        following: 0,
-        html_url: `https://github.com/${session.username ?? session.user.name}`,
-        company: null,
-        location: null,
-        blog: null,
-      });
-    }
-  }, [session]);
 
   // Run the agent pipeline when session is ready
   useEffect(() => {
@@ -71,11 +70,6 @@ export default function DashboardPage() {
         setAgentStep("profile");
         const analysis = await analyzeProfile(username, token);
         setProfileAnalysis(analysis);
-
-        // Update user profile with enriched data from analysis
-        setUserProfile((prev) =>
-          prev ? { ...prev, username: analysis.username || prev.username } : prev,
-        );
 
         // Step 2: Get repo recommendations
         setAgentStep("repos");

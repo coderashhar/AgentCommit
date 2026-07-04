@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { GitHubIcon } from "@/components/shared/github-icon";
+import { signInWithGitHub } from "@/lib/auth-client";
 import { Bot, Menu, X, LogOut, LayoutDashboard } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
@@ -80,7 +81,9 @@ export function Navbar() {
               <Button
                 size="sm"
                 className="gradient-brand border-0 text-white hover:opacity-90"
-                onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
+                onClick={() => {
+                  void signInWithGitHub();
+                }}
               >
                 <GitHubIcon className="mr-2 h-4 w-4" />
                 Sign in with GitHub
@@ -151,7 +154,9 @@ export function Navbar() {
                 <Button
                   size="sm"
                   className="w-full gradient-brand border-0 text-white"
-                  onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
+                  onClick={() => {
+                    void signInWithGitHub();
+                  }}
                 >
                   <GitHubIcon className="mr-2 h-4 w-4" />
                   Sign in with GitHub

@@ -10,7 +10,11 @@ logger = logging.getLogger(__name__)
 
 async def require_github_token(authorization: str) -> str:
     """Extract and validate a GitHub bearer token from an Authorization header."""
-    token = authorization.removeprefix("Bearer ").strip()
+    header = authorization.strip()
+    if not header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    token = header[7:].strip()
 
     if not token:
         raise HTTPException(status_code=401, detail="Missing authorization token")
