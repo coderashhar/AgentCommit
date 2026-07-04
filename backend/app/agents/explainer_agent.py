@@ -58,7 +58,7 @@ Return a JSON object with keys:
 
 explainer_agent = Agent(
     name="issue_explainer",
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     instruction=EXPLAINER_AGENT_INSTRUCTION,
     tools=[
         FunctionTool(fetch_issue_details),

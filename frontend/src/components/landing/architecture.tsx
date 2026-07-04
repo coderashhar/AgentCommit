@@ -118,26 +118,26 @@ export function Architecture() {
           <h3 className="text-xl font-semibold text-center mb-10">
             How It Works
           </h3>
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-start justify-between gap-6 sm:gap-0">
             {workflow.map((item, index) => (
-              <div key={item.step} className="flex items-center gap-3 sm:gap-0 sm:flex-col">
+              <div key={item.step} className="flex items-center flex-1">
                 <motion.div
                   initial={{ scale: 0 }}
                   whileInView={{ scale: 1 }}
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.1 }}
-                  className="flex flex-col items-center"
+                  className="flex flex-col items-center w-full"
                 >
-                  <div className="w-10 h-10 rounded-full gradient-brand flex items-center justify-center text-white font-bold text-sm shadow-md">
+                  <div className="w-12 h-12 rounded-full gradient-brand flex items-center justify-center text-white font-bold text-sm shadow-md">
                     {item.step}
                   </div>
-                  <p className="text-sm font-semibold mt-2">{item.label}</p>
-                  <p className="text-xs text-muted-foreground text-center mt-1 max-w-24">
+                  <p className="text-sm font-semibold mt-3">{item.label}</p>
+                  <p className="text-xs text-muted-foreground text-center mt-1 max-w-28">
                     {item.description}
                   </p>
                 </motion.div>
                 {index < workflow.length - 1 && (
-                  <ArrowRight className="hidden sm:block h-4 w-4 text-muted-foreground mx-2 mt-[-24px]" />
+                  <ArrowRight className="hidden sm:block h-4 w-4 text-muted-foreground shrink-0 -ml-2 -mr-2 mb-10" />
                 )}
               </div>
             ))}

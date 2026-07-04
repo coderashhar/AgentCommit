@@ -1,6 +1,6 @@
 """Pydantic models for API request/response validation."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ========================
@@ -44,6 +44,8 @@ class ProfileAnalysisRequest(BaseModel):
 
 class ProfileAnalysisResponse(BaseModel):
     """Result of profile analysis from the Profile Analyzer Agent."""
+    model_config = ConfigDict(extra="ignore")
+
     username: str
     languages: list[str] = Field(default_factory=list)
     frameworks: list[str] = Field(default_factory=list)
@@ -67,6 +69,8 @@ class RepoRecommendationRequest(BaseModel):
 
 class RecommendedRepo(BaseModel):
     """A single recommended repository."""
+    model_config = ConfigDict(extra="ignore")
+
     full_name: str = Field(..., description="owner/repo format")
     description: str = ""
     stars: int = 0
@@ -96,6 +100,8 @@ class IssueDiscoveryRequest(BaseModel):
 
 class DiscoveredIssue(BaseModel):
     """A single discovered issue."""
+    model_config = ConfigDict(extra="ignore")
+
     title: str
     number: int
     repo_full_name: str
@@ -126,8 +132,10 @@ class IssueExplanationRequest(BaseModel):
 
 class IssueExplanationResponse(BaseModel):
     """AI-generated explanation of a GitHub issue."""
+    model_config = ConfigDict(extra="ignore")
+
     title: str
-    summary: str = Field(..., description="Plain English explanation")
+    summary: str = Field("", description="Plain English explanation")
     difficulty: int = Field(1, ge=1, le=5, description="1-5 star difficulty")
     estimated_time: str = Field("", description="e.g., '2 hours'")
     required_concepts: list[str] = Field(default_factory=list)

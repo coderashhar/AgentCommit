@@ -38,7 +38,7 @@ Return your analysis as a JSON object with these exact keys:
 
 profile_agent = Agent(
     name="profile_analyzer",
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     instruction=PROFILE_AGENT_INSTRUCTION,
     tools=[
         FunctionTool(fetch_github_profile),

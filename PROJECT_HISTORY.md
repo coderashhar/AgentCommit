@@ -104,3 +104,111 @@ This document records the development journey of AgentCommit. Every completed fe
 - Build Dashboard page (protected route)
 - Build Issue Detail page
 - End-to-end testing of the agent pipeline
+
+---
+
+## 2026-07-03 — GitHub OAuth + Dashboard + Issue Detail
+
+#### Completed
+- Implemented NextAuth.js v5 with GitHub OAuth provider
+- Created auth session provider and middleware for protected routes
+- Extended NextAuth types to expose GitHub access token in session
+- Built auth-aware Navbar (sign-in/sign-out, user avatar, dashboard link)
+- Updated Hero and CTA sections with real GitHub sign-in actions
+- Built Dashboard page with full agent pipeline (profile → repos → issues)
+- Created ProfileCard component (avatar, bio, stats)
+- Created SkillBadges component (languages, frameworks, domains, experience level)
+- Created RepoRecommendations component (match scores, stars, language badges)
+- Created IssueList component (difficulty badges, labels, comments, relative time)
+- Built Issue Detail page with AI explanation view
+- Generated AUTH_SECRET for NextAuth
+
+#### Files Added
+- `frontend/src/lib/auth.ts` — NextAuth v5 configuration
+- `frontend/src/types/next-auth.d.ts` — Session type augmentation
+- `frontend/src/app/api/auth/[...nextauth]/route.ts` — OAuth route handler
+- `frontend/src/middleware.ts` — Protected route middleware
+- `frontend/src/components/providers.tsx` — SessionProvider wrapper
+- `frontend/src/app/dashboard/page.tsx` — Dashboard page
+- `frontend/src/app/issue/[...id]/page.tsx` — Issue detail page
+- `frontend/src/components/dashboard/profile-card.tsx`
+- `frontend/src/components/dashboard/skill-badges.tsx`
+- `frontend/src/components/dashboard/repo-recommendations.tsx`
+- `frontend/src/components/dashboard/issue-list.tsx`
+- `frontend/.env.local` — Frontend environment variables
+
+#### Files Modified
+- `frontend/src/app/layout.tsx` — Added Providers wrapper
+- `frontend/src/components/shared/navbar.tsx` — Auth-aware with avatar
+- `frontend/src/components/landing/hero.tsx` — Real sign-in actions
+- `frontend/src/components/landing/cta.tsx` — Real sign-in actions
+- `frontend/src/components/landing/architecture.tsx` — Fixed arrow alignment
+
+#### Decisions
+- Used NextAuth v5 (Auth.js) with `AUTH_GITHUB_ID`/`AUTH_GITHUB_SECRET` env vars
+- GitHub access token forwarded through JWT → session for backend API calls
+- Dashboard runs a sequential agent pipeline: profile → repos → issues
+- Issue detail uses catch-all route `[...id]` to handle `owner/repo/number` segments
+- Middleware protects `/dashboard` and `/issue/*` routes
+
+#### Notes
+- Frontend build passes cleanly with zero TypeScript errors
+- `useSession()` status in next-auth v5 beta doesn't include "loading" — use data checks instead
+- Need to restart dev server after creating `.env.local`
+
+#### Next Steps
+- End-to-end testing with real GitHub OAuth flow
+- Wire MCP tools into agents
+- Add loading animations and error states
+
+---
+
+## 2026-07-05 — Backend Agent JSON Fallback Resilience
+
+#### Completed
+- Debugged the dashboard-facing `API error 500: Backend Error: Agent did not return valid JSON` failure path.
+- Hardened ADK event response extraction to collect non-empty text from all event parts instead of relying only on the first final-response part.
+- Added explicit empty-response handling before JSON parsing.
+- Added GitHub API-backed fallback responses for profile analysis, repository recommendations, issue discovery, and issue explanation when an agent returns empty or invalid JSON.
+
+#### Files Modified
+- `backend/app/agents/coordinator.py`
+- `PROJECT_HISTORY.md`
+
+#### Decisions
+- Preserved the agent-first flow so Gemini responses remain the preferred output.
+- Used existing GitHub tool functions for fallback data rather than adding another integration layer.
+- Kept API response schemas unchanged so the frontend dashboard and issue detail pages do not need changes.
+
+#### Known Issues / Follow-up Tasks
+- Full backend import smoke testing requires installing backend dependencies, including `google-adk`, in the local Python environment.
+
+---
+
+## 2026-07-05 — Backend 500 Hardening and Runtime Verification
+
+#### Completed
+- Created a Python 3.12 backend virtual environment at `backend/.venv312` and installed backend dependencies.
+- Made Redis cache reads, writes, deletes, and malformed cached values fail open instead of crashing API requests.
+- Added shared GitHub token validation helper for protected backend routes.
+- Replaced repeated inline GitHub token checks in profile, repository, and issue endpoints.
+- Verified the FastAPI app imports, route wiring works, degraded profile analysis works with Redis unavailable and empty agent output, and the health endpoint responds from a running server.
+
+#### Files Added
+- `backend/app/api/github_auth.py`
+
+#### Files Modified
+- `.gitignore`
+- `backend/app/api/profile.py`
+- `backend/app/api/repos.py`
+- `backend/app/api/issues.py`
+- `backend/app/tools/utils.py`
+- `PROJECT_HISTORY.md`
+
+#### Decisions
+- Treat Redis as an optional cache dependency for request handling; unavailable cache should reduce performance, not break the dashboard.
+- Keep GitHub auth validation centralized so future protected endpoints return consistent JSON errors.
+
+#### Known Issues / Follow-up Tasks
+- Real dashboard analysis still requires valid GitHub OAuth credentials and a reachable GitHub API.
+- Gemini-powered agent responses require a valid Google API key; otherwise the GitHub-backed fallback path is used.

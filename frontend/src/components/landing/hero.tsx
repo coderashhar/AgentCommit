@@ -4,8 +4,21 @@ import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/shared/github-icon";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
+import { signIn, useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 export function Hero() {
+  const { status } = useSession();
+  const router = useRouter();
+
+  const handleGetStarted = () => {
+    if (status === "authenticated") {
+      router.push("/dashboard");
+    } else {
+      signIn("github", { callbackUrl: "/dashboard" });
+    }
+  };
+
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
       {/* Animated background gradient orbs */}
@@ -60,14 +73,16 @@ export function Hero() {
           <Button
             size="lg"
             className="gradient-brand border-0 text-white hover:opacity-90 px-8 py-6 text-base shadow-lg shadow-primary/25"
+            onClick={handleGetStarted}
           >
             <GitHubIcon className="mr-2 h-5 w-5" />
-            Get Started with GitHub
+            {status === "authenticated" ? "Go to Dashboard" : "Get Started with GitHub"}
           </Button>
           <Button
             size="lg"
             variant="outline"
             className="px-8 py-6 text-base"
+            onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}
           >
             See How It Works
             <ArrowRight className="ml-2 h-5 w-5" />

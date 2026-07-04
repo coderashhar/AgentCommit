@@ -27,8 +27,11 @@ async def fetch_github_profile(username: str, github_token: str) -> dict:
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}
 
 
 async def fetch_user_repos(
@@ -57,8 +60,11 @@ async def fetch_user_repos(
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return [{"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}]
 
 
 async def search_github_repos(
@@ -87,9 +93,12 @@ async def search_github_repos(
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        data = response.json()
-        return data.get("items", [])
+        try:
+            response.raise_for_status()
+            data = response.json()
+            return data.get("items", [])
+        except httpx.HTTPStatusError as e:
+            return [{"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}]
 
 
 async def search_github_issues(
@@ -126,8 +135,11 @@ async def search_github_issues(
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return [{"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}]
 
 
 async def fetch_issue_details(
@@ -155,8 +167,11 @@ async def fetch_issue_details(
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}
 
 
 async def fetch_repo_readme(
@@ -184,8 +199,11 @@ async def fetch_repo_readme(
         )
         if response.status_code == 404:
             return ""
-        response.raise_for_status()
-        return response.text
+        try:
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPStatusError as e:
+            return f"Error: GitHub API failed with status {e.response.status_code}. Detail: {e.response.text}"
 
 
 async def fetch_repo_languages(
@@ -211,5 +229,8 @@ async def fetch_repo_languages(
                 "Accept": "application/vnd.github+json",
             },
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}

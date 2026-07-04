@@ -42,7 +42,7 @@ Return a JSON object with key 'issues' containing the top 10 recommended issues.
 
 issue_agent = Agent(
     name="issue_discoverer",
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     instruction=ISSUE_AGENT_INSTRUCTION,
     tools=[
         FunctionTool(search_github_issues),

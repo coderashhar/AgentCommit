@@ -1,13 +1,16 @@
 """Shared utility functions for tools and agents."""
 
 import json
+import logging
 from typing import TypeVar
 
 import redis.asyncio as redis
+from redis.exceptions import RedisError
 
 from app.config import settings
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 # Redis client singleton
 _redis_client: redis.Redis | None = None
@@ -33,11 +36,21 @@ async def cache_get(key: str) -> dict | None:
     Returns:
         Cached dictionary or None if not found.
     """
-    client = await get_redis()
-    value = await client.get(key)
+    try:
+        client = await get_redis()
+        value = await client.get(key)
+    except (OSError, RedisError) as e:
+        logger.warning("Redis cache read failed for key %s: %s", key, str(e))
+        return None
+
     if value is None:
         return None
-    return json.loads(value)
+
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as e:
+        logger.warning("Redis cache value for key %s is invalid JSON: %s", key, str(e))
+        return None
 
 
 async def cache_set(key: str, value: dict, ttl_seconds: int = 3600) -> None:
@@ -48,8 +61,11 @@ async def cache_set(key: str, value: dict, ttl_seconds: int = 3600) -> None:
         value: Dictionary to cache.
         ttl_seconds: Time-to-live in seconds (default: 1 hour).
     """
-    client = await get_redis()
-    await client.set(key, json.dumps(value), ex=ttl_seconds)
+    try:
+        client = await get_redis()
+        await client.set(key, json.dumps(value), ex=ttl_seconds)
+    except (OSError, RedisError) as e:
+        logger.warning("Redis cache write failed for key %s: %s", key, str(e))
 
 
 async def cache_delete(key: str) -> None:
@@ -58,8 +74,11 @@ async def cache_delete(key: str) -> None:
     Args:
         key: Cache key to delete.
     """
-    client = await get_redis()
-    await client.delete(key)
+    try:
+        client = await get_redis()
+        await client.delete(key)
+    except (OSError, RedisError) as e:
+        logger.warning("Redis cache delete failed for key %s: %s", key, str(e))
 
 
 def truncate_text(text: str, max_length: int = 200) -> str:

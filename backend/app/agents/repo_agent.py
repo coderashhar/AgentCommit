@@ -43,7 +43,7 @@ Recommend 5-10 repositories, ranked by relevance.
 
 repo_agent = Agent(
     name="repo_recommender",
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     instruction=REPO_AGENT_INSTRUCTION,
     tools=[
         FunctionTool(search_github_repos),
