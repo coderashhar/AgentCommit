@@ -11,6 +11,7 @@ import type { DiscoveredIssue } from "@/types";
 interface IssueListProps {
   issues: DiscoveredIssue[];
   isLoading: boolean;
+  isError?: boolean;
 }
 
 const difficultyColors: Record<string, string> = {
@@ -19,7 +20,7 @@ const difficultyColors: Record<string, string> = {
   hard: "bg-red-500/10 text-red-500 border-red-500/20",
 };
 
-export function IssueList({ issues, isLoading }: IssueListProps) {
+export function IssueList({ issues, isLoading, isError = false }: IssueListProps) {
   if (isLoading) {
     return (
       <Card className="border-border/50">
@@ -42,6 +43,21 @@ export function IssueList({ issues, isLoading }: IssueListProps) {
     );
   }
 
+  if (isError) {
+    return (
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-lg">Recommended Issues</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground text-center py-8">
+            Couldn&apos;t load issue recommendations.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (issues.length === 0) {
     return (
       <Card className="border-border/50">
@@ -50,7 +66,7 @@ export function IssueList({ issues, isLoading }: IssueListProps) {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground text-center py-8">
-            Finding beginner-friendly issues for you...
+            No matching issues found yet.
           </p>
         </CardContent>
       </Card>
@@ -66,7 +82,7 @@ export function IssueList({ issues, isLoading }: IssueListProps) {
         {issues.map((issue) => (
           <Link
             key={`${issue.repo_full_name}#${issue.number}`}
-            href={`/issue/${encodeURIComponent(issue.repo_full_name)}/${issue.number}`}
+            href={`/issue/${issue.repo_full_name}/${issue.number}`}
             className="block p-4 rounded-lg border border-border/50 hover:border-primary/30 hover:bg-muted/50 transition-all group"
           >
             <div className="flex items-start justify-between gap-2">
