@@ -80,11 +80,16 @@ class RecommendedRepo(BaseModel):
     html_url: str = ""
     match_score: float = Field(0.0, description="0-100 relevance score")
     match_reason: str = ""
+    forks: int = 0
+    pushed_at: str = ""
+    tier: str = Field("", description="beginner | intermediate | advanced")
+    verified: bool = Field(False, description="Rebuilt from a live GitHub fetch rather than trusted from an LLM")
 
 
 class RepoRecommendationResponse(BaseModel):
     """List of recommended repositories."""
     repositories: list[RecommendedRepo] = Field(default_factory=list)
+    source: str = Field("agent", description="agent | hybrid | deterministic")
 
 
 # ========================
@@ -112,11 +117,14 @@ class DiscoveredIssue(BaseModel):
     body_preview: str = Field("", description="First 200 chars of the issue body")
     difficulty: str = Field("easy", description="easy | medium | hard")
     match_score: float = 0.0
+    updated_at: str = ""
+    verified: bool = Field(False, description="Rebuilt from a live GitHub fetch rather than trusted from an LLM")
 
 
 class IssueDiscoveryResponse(BaseModel):
     """List of discovered issues."""
     issues: list[DiscoveredIssue] = Field(default_factory=list)
+    source: str = Field("agent", description="agent | hybrid | deterministic")
 
 
 # ========================
