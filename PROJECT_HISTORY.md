@@ -212,3 +212,147 @@ This document records the development journey of AgentCommit. Every completed fe
 #### Known Issues / Follow-up Tasks
 - Real dashboard analysis still requires valid GitHub OAuth credentials and a reachable GitHub API.
 - Gemini-powered agent responses require a valid Google API key; otherwise the GitHub-backed fallback path is used.
+
+---
+
+## 2026-07-05 — Skill Analyzer and Repository Recommendation Fixes
+
+*(Backfilled during Phase 1 stabilization — this entry was skipped when the commit
+landed, in violation of AGENTS.md's history rule. Reconstructed from the commit diff.)*
+
+#### Completed
+- Substantial rework of `backend/app/agents/coordinator.py` (491 lines changed):
+  profile, repo, and issue recommendation flows, plus GitHub-backed fallback paths.
+- Added `backend/app/api/github_auth.py` usage across the issues/profile/repos routers.
+- Built the Dashboard page's agent pipeline UI, ProfileCard, SkillBadges,
+  RepoRecommendations, and IssueList components.
+- Built the Issue Detail page with an AI-explanation view.
+- Wired GitHub OAuth sign-in through the landing page's Hero/CTA sections and the
+  auth-aware Navbar.
+
+#### Files Added
+- `frontend/src/app/dashboard/page.tsx`
+- `frontend/src/app/issue/[...id]/page.tsx`
+- `frontend/src/components/dashboard/profile-card.tsx`, `skill-badges.tsx`,
+  `repo-recommendations.tsx`, `issue-list.tsx`
+- `frontend/src/components/providers.tsx`
+- `frontend/src/middleware.ts`
+- `frontend/src/types/next-auth.d.ts`
+- `backend/app/api/github_auth.py`
+
+#### Files Modified
+- `backend/app/agents/coordinator.py`, `explainer_agent.py`, `issue_agent.py`,
+  `profile_agent.py`, `repo_agent.py`
+- `backend/app/api/issues.py`, `profile.py`, `repos.py`
+- `backend/app/config.py`, `backend/app/models/schemas.py`,
+  `backend/app/tools/github_tool.py`, `backend/app/tools/utils.py`
+- `frontend/src/app/layout.tsx`, `frontend/src/app/api/auth/[...nextauth]/route.ts`
+- `frontend/src/components/landing/architecture.tsx`, `cta.tsx`, `hero.tsx`
+- `frontend/src/components/shared/navbar.tsx`
+- `frontend/next.config.ts`
+
+#### Known Issues / Follow-up Tasks (discovered later, during Phase 1 stabilization)
+- The repo/issue recommendation logic introduced here ranked by GitHub stars with a
+  floor but no ceiling, and the LLM prompt told the model "well-starred repos (100+)
+  indicate community trust" with no ceiling either — this surfaced as the dashboard
+  recommending mega-repos (`microsoft/vscode`, `freeCodeCamp/freeCodeCamp`,
+  `TheAlgorithms/*`) that are unrealistic first-contribution targets. Fixed in the
+  entry below.
+- The issue detail page's deep link (`issue-list.tsx`) encoded `owner/repo` as one
+  URL segment while the detail page expected three, making every issue click produce
+  a permanent loading spinner. Fixed in the entry below.
+- The GitHub OAuth token was interpolated directly into Gemini prompt text on every
+  agent call. Fixed in the entry below.
+
+---
+
+## 2026-08-29 — Phase 1 Stabilization: Tiered Recommendations, Security, PRD/Architecture
+
+#### Completed
+- Replaced star-ranked repository and issue recommendations with experience-tiered
+  ranking: beginner/intermediate/advanced bands (star ceiling, activity window, repo
+  size, labelled-issue thresholds) applied identically across the LLM path, LLM-output
+  verification, and the deterministic fallback.
+- Added a real repo/issue scoring model (`score_repo`, `score_issue`) replacing the
+  previous positional `match_score` formula, and a three-way issue difficulty
+  classifier (`classify_issue_difficulty`) replacing a two-way label-substring test
+  that could never return "hard".
+- Added LLM-output verification: every agent-proposed repository/issue is re-fetched
+  from GitHub and rebuilt from ground truth (or dropped on 404/tier-ceiling failure)
+  before reaching the frontend, closing the hallucination gap left by
+  `extra="ignore"` + fully-defaulted Pydantic schemas.
+- Removed the GitHub OAuth token from Gemini prompt text; agents are now built
+  per-request via `build_*_agent(github_token)` factories that bind the token through
+  a closure instead.
+- Fixed the issue-detail deep link (dropped `encodeURIComponent` around
+  `repo_full_name` so the catch-all route receives three segments, not one), and
+  added a "not found" state for malformed issue URLs instead of an infinite spinner.
+- Added a `next-auth` `authorized` callback so `middleware.ts` actually gates
+  `/dashboard` and `/issue/*` — previously the default `authorized: true` meant the
+  middleware matcher did nothing.
+- Added real loading/empty/error states to the dashboard's three agent-fed panels
+  (previously the error state left "still working" copy visible next to the error
+  banner), a retry affordance that resets the pipeline, and `AbortController` +
+  run-latch guards against React StrictMode double-invoking the (LLM-backed) pipeline.
+- Added `logging.config.dictConfig` in `main.py` — no logger was ever configured
+  before this, so every `logger.warning`/`logger.info` (including all Redis
+  fail-open and agent-fallback messages) was silently discarded.
+- Stopped echoing raw Python exception text to the browser from the four API routers;
+  replaced `traceback.print_exc()` with `logger.exception(...)`.
+- Fixed `.env.example` (root): `CORS_ORIGINS` was a bare string, which
+  pydantic-settings fails to parse (`SettingsError`) since it JSON-parses list-typed
+  settings — following the README's `cp .env.example .env` verbatim produced a
+  backend that crashed on import. Reconciled stale `NEXTAUTH_*`/`GITHUB_CLIENT_*`
+  names to the `AUTH_*` names NextAuth v5 actually reads.
+- Made the frontend's backend-proxy target (`next.config.ts`) read from
+  `BACKEND_API_URL` instead of a hardcoded `127.0.0.1:8000`, so a deployed frontend
+  can point at a deployed backend.
+- Added `PRD.md` and `ARCHITECTURE.md` at the repo root.
+
+#### Files Added
+- `backend/app/tools/repo_ranking.py` — pure tier bands, query builder, repo scorer
+- `backend/app/tools/issue_ranking.py` — pure issue filters, difficulty classifier, scorer
+- `PRD.md`, `ARCHITECTURE.md`
+
+#### Files Modified
+- `backend/app/agents/coordinator.py` (rewritten), `repo_agent.py`, `issue_agent.py`,
+  `profile_agent.py`, `explainer_agent.py` (all converted to per-request factories)
+- `backend/app/tools/github_tool.py` (search sort/order fix, `fetch_repo` added,
+  request timeouts), `backend/app/tools/utils.py` (`build_cache_key`)
+- `backend/app/models/schemas.py` (additive fields: `forks`, `pushed_at`, `tier`,
+  `verified`, `source`, `updated_at`)
+- `backend/app/main.py` (logging config), `backend/app/api/profile.py`, `repos.py`,
+  `issues.py` (error-detail sanitization)
+- `frontend/src/app/dashboard/page.tsx`, `frontend/src/app/issue/[...id]/page.tsx`
+- `frontend/src/components/dashboard/issue-list.tsx`, `repo-recommendations.tsx`,
+  `skill-badges.tsx`, `profile-card.tsx` (unused-import cleanup)
+- `frontend/src/lib/auth.ts`, `frontend/src/lib/api.ts`, `frontend/src/types/index.ts`
+- `frontend/next.config.ts`
+- `.env.example`, `frontend/.env.example`
+
+#### Decisions
+- Tiered star ceilings (not a single global cutoff) so advanced users still see
+  large, high-quality projects while beginners never see them — see `PRD.md` §4 and
+  `ARCHITECTURE.md` §3.1 for the exact bands and rationale.
+- LLM-path verification tops up rather than replaces the deterministic fallback when
+  fewer than 5 repos (3 issues) survive, preserving the agent-first flow: the model's
+  real picks stay ranked first, `source` becomes `"hybrid"` rather than discarding
+  its output outright.
+- Cache keys stay profile-scoped (not per-user) deliberately — the bug was missing
+  input dimensions and caching empty results, not sharing itself. Bumped
+  `CACHE_SCHEMA_VERSION` to `v2` so old entries age out on their own TTL rather than
+  requiring a flush.
+- Left PostgreSQL and GitHub MCP unwired — see `ARCHITECTURE.md` §5 for the explicit
+  Phase 2 trigger conditions, so this isn't an open-ended deferral.
+
+#### Known Issues / Follow-up Tasks
+- No test harness exists anywhere in the repo. The new ranking modules are pure
+  functions specifically so this is cheap to close in Phase 2 — see `PRD.md` §4 and
+  `ARCHITECTURE.md` §7.
+- `require_github_token` still costs a live GitHub round-trip, uncached, on every
+  protected request.
+- No rate limiting or request-size bounds (e.g. `IssueDiscoveryRequest.repositories`
+  has no max length).
+- Gemini free-tier 429 handling is mitigated (the deterministic fallback is now
+  tier-correct) but not resolved — a request can still stall ~100s across 5 retries
+  before falling through.
