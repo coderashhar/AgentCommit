@@ -1,8 +1,8 @@
 """Issue Explainer Agent — converts complex GitHub issues into plain English.
 
-Uses Google ADK with Gemini 2.5 Pro to analyze a GitHub issue and generate
-a beginner-friendly explanation with difficulty rating, time estimate,
-required concepts, and learning resources.
+Uses Google ADK with Gemini to analyze a GitHub issue and generate a beginner-friendly
+explanation with difficulty rating, time estimate, required concepts, and learning
+resources.
 """
 
 from google.adk.agents import Agent
@@ -56,12 +56,45 @@ Return a JSON object with keys:
 - files_to_explore (list of strings)
 """
 
-explainer_agent = Agent(
-    name="issue_explainer",
-    model="gemini-2.5-flash",
-    instruction=EXPLAINER_AGENT_INSTRUCTION,
-    tools=[
-        FunctionTool(fetch_issue_details),
-        FunctionTool(fetch_repo_readme),
-    ],
-)
+
+def build_explainer_agent(github_token: str) -> Agent:
+    """Construct an issue-explainer agent bound to one request's GitHub token.
+
+    The token is captured in this closure rather than passed as a tool argument, so
+    it never appears in the prompt text sent to Gemini.
+    """
+
+    async def get_issue_details(owner: str, repo: str, issue_number: int) -> dict:
+        """Fetch detailed information about a specific GitHub issue.
+
+        Args:
+            owner: Repository owner.
+            repo: Repository name.
+            issue_number: Issue number.
+
+        Returns:
+            Dictionary containing the issue details.
+        """
+        return await fetch_issue_details(owner, repo, issue_number, github_token)
+
+    async def get_repo_readme(owner: str, repo: str) -> str:
+        """Fetch the README content of a repository.
+
+        Args:
+            owner: Repository owner.
+            repo: Repository name.
+
+        Returns:
+            README content as a string, or empty string if not found.
+        """
+        return await fetch_repo_readme(owner, repo, github_token)
+
+    return Agent(
+        name="issue_explainer",
+        model="gemini-2.5-flash",
+        instruction=EXPLAINER_AGENT_INSTRUCTION,
+        tools=[
+            FunctionTool(get_issue_details),
+            FunctionTool(get_repo_readme),
+        ],
+    )
