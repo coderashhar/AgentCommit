@@ -10,7 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
   Bot,
@@ -35,10 +34,18 @@ export default function IssueDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Extract owner/repo and issue number from URL params
-  const segments = params.id as string[];
+  const segments = params.id as string[] | undefined;
   const owner = segments?.[0] ?? "";
   const repo = segments?.[1] ?? "";
-  const issueNumber = parseInt(segments?.[2] ?? "0", 10);
+  const parsedIssueNumber = Number.parseInt(segments?.[2] ?? "", 10);
+  const issueNumber = Number.isFinite(parsedIssueNumber) ? parsedIssueNumber : 0;
+  const hasValidParams = Boolean(owner) && Boolean(repo) && issueNumber > 0;
+
+  const [retryToken, setRetryToken] = useState(0);
+  const retry = () => {
+    setError(null);
+    setRetryToken((value) => value + 1);
+  };
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -46,23 +53,39 @@ export default function IssueDetailPage() {
       return;
     }
 
-    if (!session?.accessToken || !owner || !repo || !issueNumber) return;
+    // Malformed URL (e.g. a stray link or a manually-edited address): the render
+    // below returns the "not found" page before ever consulting `isLoading`, so
+    // there's nothing to synchronize here — just skip starting a fetch that would
+    // never resolve to anything valid.
+    if (!hasValidParams) return;
+
+    if (!session?.accessToken) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
 
     const fetchExplanation = async () => {
       try {
         setIsLoading(true);
-        const result = await explainIssue(owner, repo, issueNumber, session.accessToken);
-        setExplanation(result);
+        setError(null);
+        const result = await explainIssue(owner, repo, issueNumber, session.accessToken, controller.signal);
+        if (!cancelled) setExplanation(result);
       } catch (err) {
+        if (cancelled || (err instanceof DOMException && err.name === "AbortError")) return;
         console.error("Issue explanation error:", err);
         setError(err instanceof Error ? err.message : "Failed to explain issue");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     fetchExplanation();
-  }, [session, status, owner, repo, issueNumber, router]);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [session, status, owner, repo, issueNumber, hasValidParams, router, retryToken]);
 
   if (status === "loading") {
     return (
@@ -79,6 +102,30 @@ export default function IssueDetailPage() {
         className={`h-4 w-4 ${i < level ? "text-amber-400 fill-amber-400" : "text-muted-foreground/30"}`}
       />
     ));
+
+  if (!hasValidParams) {
+    return (
+      <>
+        <Navbar />
+        <main className="flex-1 pt-20 pb-12">
+          <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center py-16">
+            <h1 className="text-2xl font-bold tracking-tight mb-2">Issue not found</h1>
+            <p className="text-sm text-muted-foreground mb-6">
+              This link doesn&apos;t point to a valid issue.
+            </p>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </Link>
+          </div>
+        </main>
+        <Footer />
+      </>
+    );
+  }
 
   return (
     <>
@@ -116,8 +163,11 @@ export default function IssueDetailPage() {
           )}
 
           {error && (
-            <div className="mb-6 p-4 rounded-lg border border-destructive/20 bg-destructive/5">
+            <div className="mb-6 p-4 rounded-lg border border-destructive/20 bg-destructive/5 flex items-center justify-between gap-4">
               <p className="text-sm text-destructive">{error}</p>
+              <Button variant="outline" size="sm" onClick={retry} className="shrink-0">
+                Try again
+              </Button>
             </div>
           )}
 
@@ -179,8 +229,8 @@ export default function IssueDetailPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="flex flex-wrap gap-2">
-                      {explanation.required_concepts.map((concept) => (
-                        <Badge key={concept} variant="secondary" className="text-sm">
+                      {explanation.required_concepts.map((concept, index) => (
+                        <Badge key={`${concept}-${index}`} variant="secondary" className="text-sm">
                           {concept}
                         </Badge>
                       ))}
@@ -218,9 +268,9 @@ export default function IssueDetailPage() {
                     </CardHeader>
                     <CardContent>
                       <ul className="space-y-1.5">
-                        {explanation.files_to_explore.map((file) => (
+                        {explanation.files_to_explore.map((file, index) => (
                           <li
-                            key={file}
+                            key={`${file}-${index}`}
                             className="text-sm text-muted-foreground font-mono bg-muted/50 rounded px-2 py-1"
                           >
                             {file}
@@ -241,8 +291,8 @@ export default function IssueDetailPage() {
                     </CardHeader>
                     <CardContent>
                       <ul className="space-y-1.5">
-                        {explanation.learning_resources.map((resource) => (
-                          <li key={resource} className="text-sm">
+                        {explanation.learning_resources.map((resource, index) => (
+                          <li key={`${resource}-${index}`} className="text-sm">
                             {resource.startsWith("http") ? (
                               <a
                                 href={resource}

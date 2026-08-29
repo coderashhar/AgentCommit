@@ -39,11 +39,9 @@ async def discover_issues(
             github_token=token,
         )
         return JSONResponse(content=result.model_dump())
-    except Exception as e:
-        import traceback
-        logger.error("Issue discovery failed: %s", str(e))
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Backend Error: {str(e)}")
+    except Exception:
+        logger.exception("Issue discovery failed")
+        raise HTTPException(status_code=500, detail="Issue discovery failed. Please try again.")
 
 
 @router.post("/explain")
@@ -67,8 +65,6 @@ async def explain_issue(
             github_token=token,
         )
         return JSONResponse(content=result.model_dump())
-    except Exception as e:
-        import traceback
-        logger.error("Issue explanation failed: %s", str(e))
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Backend Error: {str(e)}")
+    except Exception:
+        logger.exception("Issue explanation failed")
+        raise HTTPException(status_code=500, detail="Issue explanation failed. Please try again.")

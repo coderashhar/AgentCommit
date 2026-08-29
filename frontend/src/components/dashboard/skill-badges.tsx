@@ -9,6 +9,7 @@ import type { ProfileAnalysis } from "@/types";
 interface SkillBadgesProps {
   analysis: ProfileAnalysis | null;
   isLoading: boolean;
+  isError?: boolean;
 }
 
 const levelColors: Record<string, string> = {
@@ -17,7 +18,7 @@ const levelColors: Record<string, string> = {
   advanced: "bg-violet-500/10 text-violet-500 border-violet-500/20",
 };
 
-export function SkillBadges({ analysis, isLoading }: SkillBadgesProps) {
+export function SkillBadges({ analysis, isLoading, isError = false }: SkillBadgesProps) {
   if (isLoading) {
     return (
       <Card className="border-border/50">
@@ -28,6 +29,18 @@ export function SkillBadges({ analysis, isLoading }: SkillBadgesProps) {
               <Skeleton key={i} className="h-6 w-16 rounded-full" />
             ))}
           </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card className="border-border/50">
+        <CardContent className="p-6">
+          <p className="text-sm text-muted-foreground text-center py-4">
+            Couldn&apos;t load your skills analysis.
+          </p>
         </CardContent>
       </Card>
     );

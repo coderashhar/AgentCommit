@@ -1,7 +1,9 @@
 """Shared utility functions for tools and agents."""
 
+import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from typing import TypeVar
 
 import redis.asyncio as redis
@@ -11,6 +13,14 @@ from app.config import settings
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+
+# Bump this whenever a cached response shape or ranking algorithm changes. Stale
+# entries under the old prefix simply age out on their own TTL — no flush needed.
+CACHE_SCHEMA_VERSION = "v2"
+
+# Keys longer than this are hashed rather than left inline, so a caller passing an
+# unbounded list of repo names can't produce an unbounded Redis key.
+_MAX_INLINE_KEY_LEN = 120
 
 # Redis client singleton
 _redis_client: redis.Redis | None = None
@@ -79,6 +89,39 @@ async def cache_delete(key: str) -> None:
         await client.delete(key)
     except (OSError, RedisError) as e:
         logger.warning("Redis cache delete failed for key %s: %s", key, str(e))
+
+
+def _normalize_part(part: str | Sequence[str]) -> str:
+    """Normalize one cache-key part: strip/lowercase strings, sort+join sequences."""
+    if isinstance(part, str):
+        return part.strip().lower()
+    normalized_items = sorted(item.strip().lower() for item in part if item and item.strip())
+    return "|".join(normalized_items)
+
+
+def build_cache_key(namespace: str, *parts: str | Sequence[str]) -> str:
+    """Build a stable, versioned, length-bounded Redis cache key.
+
+    Each part is normalized (stripped, lowercased); sequence parts are sorted before
+    joining so that e.g. two differently-ordered repo lists collide as intended. Parts
+    are joined with '::'. If the resulting tail would exceed `_MAX_INLINE_KEY_LEN` it
+    is replaced with a sha256 hash so keys stay bounded without losing collision
+    resistance — this matters because request bodies like `repositories: list[str]`
+    have no length limit.
+
+    Args:
+        namespace: Logical grouping, e.g. 'repos', 'issues', 'profile'.
+        *parts: Values that affect the cached result — every input to the computation
+            should be represented here, or two different requests can collide on one
+            cache entry.
+
+    Returns:
+        A cache key of the form 'agentcommit:{schema_version}:{namespace}:{tail}'.
+    """
+    tail = "::".join(_normalize_part(part) for part in parts)
+    if len(tail) > _MAX_INLINE_KEY_LEN:
+        tail = hashlib.sha256(tail.encode("utf-8")).hexdigest()
+    return f"agentcommit:{CACHE_SCHEMA_VERSION}:{namespace}:{tail}"
 
 
 def truncate_text(text: str, max_length: int = 200) -> str:

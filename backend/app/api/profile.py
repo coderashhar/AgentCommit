@@ -33,8 +33,6 @@ async def analyze_profile(
             github_token=token,
         )
         return JSONResponse(content=result.model_dump())
-    except Exception as e:
-        import traceback
-        logger.error("Profile analysis failed: %s", str(e))
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Backend Error: {str(e)}")
+    except Exception:
+        logger.exception("Profile analysis failed")
+        raise HTTPException(status_code=500, detail="Profile analysis failed. Please try again.")

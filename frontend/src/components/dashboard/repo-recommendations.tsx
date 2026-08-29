@@ -3,16 +3,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Star, GitFork, ExternalLink } from "lucide-react";
+import { Star, GitFork, CircleDot, ExternalLink } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
 import type { RecommendedRepo } from "@/types";
 
 interface RepoRecommendationsProps {
   repos: RecommendedRepo[];
   isLoading: boolean;
+  isError?: boolean;
 }
 
-export function RepoRecommendations({ repos, isLoading }: RepoRecommendationsProps) {
+export function RepoRecommendations({ repos, isLoading, isError = false }: RepoRecommendationsProps) {
   if (isLoading) {
     return (
       <Card className="border-border/50">
@@ -35,6 +36,21 @@ export function RepoRecommendations({ repos, isLoading }: RepoRecommendationsPro
     );
   }
 
+  if (isError) {
+    return (
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-lg">Recommended Repositories</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground text-center py-8">
+            Couldn&apos;t load repository recommendations.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (repos.length === 0) {
     return (
       <Card className="border-border/50">
@@ -43,7 +59,7 @@ export function RepoRecommendations({ repos, isLoading }: RepoRecommendationsPro
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground text-center py-8">
-            Analyzing your profile to find matching repositories...
+            No matching repositories found yet.
           </p>
         </CardContent>
       </Card>
@@ -78,7 +94,7 @@ export function RepoRecommendations({ repos, isLoading }: RepoRecommendationsPro
               <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
 
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex items-center gap-3 mt-3 flex-wrap">
               {repo.language && (
                 <Badge variant="secondary" className="text-xs">
                   {repo.language}
@@ -88,12 +104,37 @@ export function RepoRecommendations({ repos, isLoading }: RepoRecommendationsPro
                 <Star className="h-3 w-3" />
                 {formatNumber(repo.stars)}
               </span>
+              {repo.forks > 0 && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <GitFork className="h-3 w-3" />
+                  {formatNumber(repo.forks)}
+                </span>
+              )}
+              {repo.open_issues_count > 0 && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <CircleDot className="h-3 w-3" />
+                  {repo.open_issues_count} open issues
+                </span>
+              )}
               {repo.match_score > 0 && (
                 <Badge variant="outline" className="text-xs border-primary/20 text-primary ml-auto">
                   {Math.round(repo.match_score)}% match
                 </Badge>
               )}
             </div>
+
+            {repo.topics.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                {repo.topics.slice(0, 4).map((topic) => (
+                  <span
+                    key={topic}
+                    className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                  >
+                    {topic}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {repo.match_reason && (
               <p className="text-xs text-muted-foreground mt-2 italic">

@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# .env.example is a template with no real secrets — track it so contributors
+# have a reference for required variable names (it was never committed before,
+# since this pattern excluded it from day one).
+!.env.example
 
 # vercel
 .vercel

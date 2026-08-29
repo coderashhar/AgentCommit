@@ -8,6 +8,17 @@ import httpx
 
 GITHUB_API_BASE = "https://api.github.com"
 
+# Bare httpx.AsyncClient(timeout=REQUEST_TIMEOUT) has no total-request timeout, so a hung GitHub call could
+# block a request indefinitely. Every client below is constructed with this budget.
+REQUEST_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+# Repository-search sort values GitHub actually supports. Anything else (including the
+# old default "stars", which biases every search toward the most popular repos on
+# GitHub regardless of whether a newcomer can contribute to them) is treated as "rank
+# by relevance" by omitting the sort/order params entirely.
+_ALLOWED_REPO_SORTS = frozenset({"stars", "forks", "help-wanted-issues", "updated"})
+_ALLOWED_ORDERS = frozenset({"asc", "desc"})
+
 
 async def fetch_github_profile(username: str, github_token: str) -> dict:
     """Fetch a GitHub user's profile information.
@@ -19,7 +30,7 @@ async def fetch_github_profile(username: str, github_token: str) -> dict:
     Returns:
         Dictionary containing the user's profile data.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/users/{username}",
             headers={
@@ -51,7 +62,7 @@ async def fetch_user_repos(
     Returns:
         List of repository data dictionaries.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/users/{username}/repos",
             params={"sort": sort, "per_page": per_page, "type": "owner"},
@@ -70,24 +81,45 @@ async def fetch_user_repos(
 async def search_github_repos(
     query: str,
     github_token: str,
-    sort: str = "stars",
-    per_page: int = 10,
+    sort: str = "",
+    order: str = "desc",
+    per_page: int = 25,
+    page: int = 1,
 ) -> list[dict]:
     """Search GitHub repositories by query string.
 
     Args:
-        query: Search query (e.g., 'language:python topic:machine-learning stars:>100').
+        query: Search query built with GitHub qualifiers (e.g.,
+            'language:python stars:500..20000 pushed:>2026-07-30'). Build the star,
+            size, and activity bounds into this query yourself — do not rely on
+            `sort` to compensate for an unbounded query.
         github_token: OAuth access token.
-        sort: Sort field — 'stars', 'forks', 'help-wanted-issues', 'updated'.
-        per_page: Number of results.
+        sort: Leave empty ("") to rank by relevance — this is almost always what you
+            want. Set to 'help-wanted-issues' to surface repos actively seeking
+            contributors. Never use 'stars': it returns the most popular repos on
+            GitHub regardless of whether a newcomer can realistically contribute to
+            them. Any value outside 'stars', 'forks', 'help-wanted-issues', 'updated'
+            is treated the same as leaving it empty.
+        order: 'asc' or 'desc'. Only applied when `sort` is a recognised value.
+        per_page: Number of results per page (clamped to 1-100).
+        page: Result page, 1-indexed (clamped to 1-10; GitHub search caps at 1000 results).
 
     Returns:
         List of matching repository data.
     """
-    async with httpx.AsyncClient() as client:
+    params: dict[str, str | int] = {
+        "q": query,
+        "per_page": max(1, min(100, per_page)),
+        "page": max(1, min(10, page)),
+    }
+    if sort in _ALLOWED_REPO_SORTS:
+        params["sort"] = sort
+        params["order"] = order if order in _ALLOWED_ORDERS else "desc"
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/search/repositories",
-            params={"q": query, "sort": sort, "per_page": per_page},
+            params=params,
             headers={
                 "Authorization": f"Bearer {github_token}",
                 "Accept": "application/vnd.github+json",
@@ -101,35 +133,84 @@ async def search_github_repos(
             return [{"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}]
 
 
+async def fetch_repo(owner: str, repo: str, github_token: str) -> dict:
+    """Fetch a single repository's canonical metadata.
+
+    Used to verify repositories an LLM proposes: hallucinated repos return a 404 here
+    and can be dropped, and every displayed field is rebuilt from this response rather
+    than trusted from the model's output.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        github_token: OAuth access token.
+
+    Returns:
+        Dictionary containing the repository's metadata.
+    """
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        response = await client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}",
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}
+
+
 async def search_github_issues(
     repo_full_name: str,
     github_token: str,
     labels: str = "good first issue",
     state: str = "open",
+    assignee: str = "none",
+    sort: str = "updated",
+    direction: str = "desc",
+    since: str = "",
     per_page: int = 10,
 ) -> list[dict]:
-    """Search for issues in a specific repository.
+    """List issues in a specific repository, filtered to unassigned work.
 
     Args:
         repo_full_name: Repository in 'owner/repo' format.
         github_token: OAuth access token.
         labels: Comma-separated labels to filter by.
         state: Issue state — 'open', 'closed', 'all'.
+        assignee: 'none' returns only unassigned issues (the default — assigned
+            issues are already claimed and should not be recommended). Pass a
+            username to filter to that assignee, or '*' for any assignee.
+        sort: 'created', 'updated', or 'comments'. 'updated' (the default) surfaces
+            issues with recent maintainer attention rather than merely recent ones.
+        direction: 'asc' or 'desc'.
+        since: ISO8601 timestamp (e.g. '2026-06-01T00:00:00Z'). When set, only issues
+            updated at or after this time are returned. Leave empty to disable.
         per_page: Number of results.
 
     Returns:
-        List of issue data dictionaries.
+        List of issue data dictionaries. Note: GitHub's issues-list endpoint also
+        returns pull requests; callers must filter entries containing a
+        'pull_request' key.
     """
-    async with httpx.AsyncClient() as client:
+    params: dict[str, str | int] = {
+        "labels": labels,
+        "state": state,
+        "assignee": assignee,
+        "per_page": per_page,
+        "sort": sort,
+        "direction": direction,
+    }
+    if since:
+        params["since"] = since
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/repos/{repo_full_name}/issues",
-            params={
-                "labels": labels,
-                "state": state,
-                "per_page": per_page,
-                "sort": "created",
-                "direction": "desc",
-            },
+            params=params,
             headers={
                 "Authorization": f"Bearer {github_token}",
                 "Accept": "application/vnd.github+json",
@@ -159,7 +240,7 @@ async def fetch_issue_details(
     Returns:
         Dictionary containing the issue details.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues/{issue_number}",
             headers={
@@ -189,7 +270,7 @@ async def fetch_repo_readme(
     Returns:
         README content as a string, or empty string if not found.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme",
             headers={
@@ -221,7 +302,7 @@ async def fetch_repo_languages(
     Returns:
         Dictionary mapping language names to byte counts.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         response = await client.get(
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/languages",
             headers={

@@ -56,10 +56,15 @@ export interface RecommendedRepo {
   html_url: string;
   match_score: number;
   match_reason: string;
+  forks: number;
+  pushed_at: string;
+  tier: string;
+  verified: boolean;
 }
 
 export interface RepoRecommendationResponse {
   repositories: RecommendedRepo[];
+  source: "agent" | "hybrid" | "deterministic";
 }
 
 // ========================
@@ -77,10 +82,13 @@ export interface DiscoveredIssue {
   body_preview: string;
   difficulty: "easy" | "medium" | "hard";
   match_score: number;
+  updated_at: string;
+  verified: boolean;
 }
 
 export interface IssueDiscoveryResponse {
   issues: DiscoveredIssue[];
+  source: "agent" | "hybrid" | "deterministic";
 }
 
 // ========================

@@ -38,8 +38,6 @@ async def recommend_repos(
             github_token=token,
         )
         return JSONResponse(content=result.model_dump())
-    except Exception as e:
-        import traceback
-        logger.error("Repo recommendation failed: %s", str(e))
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Backend Error: {str(e)}")
+    except Exception:
+        logger.exception("Repo recommendation failed")
+        raise HTTPException(status_code=500, detail="Repo recommendation failed. Please try again.")

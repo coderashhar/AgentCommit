@@ -30,25 +30,29 @@ out/
 # ========================
 # Python
 # ========================
+# Scoped to backend/ — the unscoped forms of build/, lib/, var/, etc. are common,
+# legitimate directory names in a JS/TS tree and previously matched (and silently
+# excluded from git) frontend/src/lib/, which held real application source
+# (api.ts, auth.ts, utils.ts, constants.ts) that was never committed as a result.
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg
 *.egg-info/
-dist/
-build/
-eggs/
+backend/dist/
+backend/build/
+backend/eggs/
 *.whl
 .Python
-develop-eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
+backend/develop-eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/pip-wheel-metadata/
 
 # Virtual Environments
 .venv/
