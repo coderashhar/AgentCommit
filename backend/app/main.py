@@ -1,5 +1,6 @@
 """AgentCommit Backend — FastAPI application entry point."""
 
+import logging.config
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -8,6 +9,32 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api import auth, profile, repos, issues
+
+# Every module calls logging.getLogger(__name__), but without this call nothing was
+# ever configured — every logger.warning/logger.info in the app was silently
+# discarded, including the Redis fail-open warnings and "agent failed; using
+# fallback" messages that are the most important signal in this codebase.
+logging.config.dictConfig(
+    {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+            },
+        },
+        "root": {
+            "handlers": ["console"],
+            "level": "INFO",
+        },
+    }
+)
 
 
 @asynccontextmanager
