@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/shared/navbar";
@@ -9,7 +9,7 @@ import { ProfileCard } from "@/components/dashboard/profile-card";
 import { SkillBadges } from "@/components/dashboard/skill-badges";
 import { RepoRecommendations } from "@/components/dashboard/repo-recommendations";
 import { IssueList } from "@/components/dashboard/issue-list";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Bot, Loader2 } from "lucide-react";
 import { analyzeProfile, getRecommendedRepos, discoverIssues } from "@/lib/api";
 import type {
@@ -21,16 +21,46 @@ import type {
 
 type AgentStep = "idle" | "profile" | "repos" | "issues" | "done" | "error";
 
+// Issue discovery only ever sees repos from this list, so widening it from the
+// original 5 spreads recommended issues across more repositories rather than
+// clustering on the handful with the highest match score.
+const MAX_REPOS_FOR_ISSUE_DISCOVERY = 10;
+
+const AGENT_LABELS: Record<AgentStep, string> = {
+  idle: "Waiting...",
+  profile: "🔍 Analyzing your GitHub profile...",
+  repos: "📦 Finding matching repositories...",
+  issues: "🎯 Discovering beginner-friendly issues...",
+  done: "✅ Analysis complete!",
+  error: "❌ Something went wrong",
+};
+
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  // The analyzed username (once profile analysis completes) can differ from the
+  // session's GitHub login normalization; tracked separately so it can override the
+  // session-derived profile without re-introducing a setState-in-effect.
+  const [analyzedUsername, setAnalyzedUsername] = useState<string | null>(null);
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysis | null>(null);
   const [repos, setRepos] = useState<RecommendedRepo[]>([]);
   const [issues, setIssues] = useState<DiscoveredIssue[]>([]);
   const [agentStep, setAgentStep] = useState<AgentStep>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [runId, setRunId] = useState(0);
+
+  // Guards the StrictMode double-invoke of this effect in dev, which would otherwise
+  // fire the whole (LLM-backed) pipeline twice per mount.
+  const runningRef = useRef(false);
+
+  const retry = () => {
+    setError(null);
+    setAgentStep("idle");
+    setRepos([]);
+    setIssues([]);
+    setRunId((value) => value + 1);
+  };
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -39,28 +69,42 @@ export default function DashboardPage() {
     }
   }, [status, router]);
 
-  // Build user profile from session data
-  useEffect(() => {
-    if (session?.user) {
-      setUserProfile({
-        username: session.username ?? session.user.name ?? "",
-        name: session.user.name ?? "",
-        avatar_url: session.user.image ?? "",
-        bio: "",
-        public_repos: 0,
-        followers: 0,
-        following: 0,
-        html_url: `https://github.com/${session.username ?? session.user.name}`,
-        company: null,
-        location: null,
-        blog: null,
-      });
-    }
-  }, [session]);
+  // Derived directly from session data on each render — no effect needed, since
+  // there's nothing here to synchronize against an external system.
+  const userProfile: UserProfile | null = useMemo(() => {
+    if (!session?.user) return null;
+    const username = analyzedUsername ?? session.username ?? session.user.name ?? "";
+    return {
+      username,
+      name: session.user.name ?? "",
+      avatar_url: session.user.image ?? "",
+      bio: "",
+      public_repos: 0,
+      followers: 0,
+      following: 0,
+      html_url: `https://github.com/${username}`,
+      company: null,
+      location: null,
+      blog: null,
+    };
+  }, [session, analyzedUsername]);
 
-  // Run the agent pipeline when session is ready
+  // Run the agent pipeline when session is ready.
+  //
+  // Deliberately excludes `agentStep` from the dependency array even though it's
+  // read below: the pipeline calls setAgentStep() repeatedly as it progresses, and
+  // if `agentStep` were a dependency, each of those calls would re-trigger this
+  // effect, run the AbortController cleanup, and abort the very fetch the step
+  // change was reporting progress on — freezing the UI on the first step forever.
+  // This effect should only (re-)start the pipeline when the session becomes ready
+  // or `retry()` bumps `runId`; `agentStep`'s value is read once at that moment via
+  // closure, not tracked as a re-run trigger.
   useEffect(() => {
-    if (!session?.accessToken || !session?.username || agentStep !== "idle") return;
+    if (!session?.accessToken || !session?.username) return;
+    if (agentStep !== "idle" || runningRef.current) return;
+
+    runningRef.current = true;
+    const controller = new AbortController();
 
     const runPipeline = async () => {
       const token = session.accessToken;
@@ -69,13 +113,13 @@ export default function DashboardPage() {
       try {
         // Step 1: Analyze profile
         setAgentStep("profile");
-        const analysis = await analyzeProfile(username, token);
+        const analysis = await analyzeProfile(username, token, controller.signal);
         setProfileAnalysis(analysis);
 
-        // Update user profile with enriched data from analysis
-        setUserProfile((prev) =>
-          prev ? { ...prev, username: analysis.username || prev.username } : prev,
-        );
+        // Prefer the analyzed username, once available, over the session-derived one.
+        if (analysis.username) {
+          setAnalyzedUsername(analysis.username);
+        }
 
         // Step 2: Get repo recommendations
         setAgentStep("repos");
@@ -87,13 +131,14 @@ export default function DashboardPage() {
             domains: analysis.domains,
           },
           token,
+          controller.signal,
         );
         setRepos(repoResponse.repositories);
 
         // Step 3: Discover issues
         setAgentStep("issues");
         const repoNames = repoResponse.repositories
-          .slice(0, 5)
+          .slice(0, MAX_REPOS_FOR_ISSUE_DISCOVERY)
           .map((r) => r.full_name);
 
         if (repoNames.length > 0) {
@@ -104,20 +149,29 @@ export default function DashboardPage() {
               experience_level: analysis.experience_level,
             },
             token,
+            controller.signal,
           );
           setIssues(issueResponse.issues);
         }
 
         setAgentStep("done");
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Agent pipeline error:", err);
         setError(err instanceof Error ? err.message : "An unexpected error occurred");
         setAgentStep("error");
+      } finally {
+        runningRef.current = false;
       }
     };
 
     runPipeline();
-  }, [session, agentStep]);
+
+    return () => {
+      controller.abort();
+      runningRef.current = false;
+    };
+  }, [session, agentStep, runId]);
 
   if (status === "loading") {
     return (
@@ -127,14 +181,9 @@ export default function DashboardPage() {
     );
   }
 
-  const agentLabels: Record<AgentStep, string> = {
-    idle: "Waiting...",
-    profile: "🔍 Analyzing your GitHub profile...",
-    repos: "📦 Finding matching repositories...",
-    issues: "🎯 Discovering beginner-friendly issues...",
-    done: "✅ Analysis complete!",
-    error: "❌ Something went wrong",
-  };
+  const isProfileError = agentStep === "error" && !profileAnalysis;
+  const isReposError = agentStep === "error" && repos.length === 0;
+  const isIssuesError = agentStep === "error" && issues.length === 0;
 
   return (
     <>
@@ -153,14 +202,25 @@ export default function DashboardPage() {
 
           {/* Agent status bar */}
           {agentStep !== "done" && agentStep !== "idle" && (
-            <div className="mb-6 p-3 rounded-lg border border-primary/20 bg-primary/5 flex items-center gap-3">
+            <div
+              className={`mb-6 p-3 rounded-lg border flex items-center gap-3 ${
+                agentStep === "error"
+                  ? "border-destructive/20 bg-destructive/5"
+                  : "border-primary/20 bg-primary/5"
+              }`}
+            >
               {agentStep === "error" ? (
-                <span className="text-sm text-destructive">{error}</span>
+                <>
+                  <span className="text-sm text-destructive flex-1">{error}</span>
+                  <Button variant="outline" size="sm" onClick={retry} className="shrink-0">
+                    Try again
+                  </Button>
+                </>
               ) : (
                 <>
                   <Bot className="h-5 w-5 text-primary animate-pulse" />
                   <span className="text-sm text-primary font-medium">
-                    {agentLabels[agentStep]}
+                    {AGENT_LABELS[agentStep]}
                   </span>
                   <Loader2 className="h-4 w-4 animate-spin text-primary ml-auto" />
                 </>
@@ -179,6 +239,7 @@ export default function DashboardPage() {
               <SkillBadges
                 analysis={profileAnalysis}
                 isLoading={agentStep === "profile" || agentStep === "idle"}
+                isError={isProfileError}
               />
             </div>
 
@@ -187,6 +248,7 @@ export default function DashboardPage() {
               <RepoRecommendations
                 repos={repos}
                 isLoading={agentStep === "profile" || agentStep === "repos" || agentStep === "idle"}
+                isError={isReposError}
               />
               <IssueList
                 issues={issues}
@@ -196,6 +258,7 @@ export default function DashboardPage() {
                   agentStep === "issues" ||
                   agentStep === "idle"
                 }
+                isError={isIssuesError}
               />
             </div>
           </div>
