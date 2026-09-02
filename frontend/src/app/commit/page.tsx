@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/shared/navbar";
@@ -8,7 +8,7 @@ import { Footer } from "@/components/shared/footer";
 import { CommitGenerator } from "@/components/commit/commit-generator";
 import { GitCommit, Loader2 } from "lucide-react";
 
-export default function CommitPage() {
+function CommitPageContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -62,5 +62,25 @@ export default function CommitPage() {
       </main>
       <Footer />
     </>
+  );
+}
+
+/**
+ * `useSearchParams` opts the subtree into client-side rendering, which fails the
+ * production build unless it sits inside a Suspense boundary. Keeping the boundary
+ * here — rather than around a smaller inner piece — means the whole page shares one
+ * fallback and the query params are read in exactly one place.
+ */
+export default function CommitPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <CommitPageContent />
+    </Suspense>
   );
 }
