@@ -14,15 +14,23 @@ import {
   ArrowLeft,
   Bot,
   BookOpen,
+  ChevronDown,
+  ChevronRight,
   Clock,
   FileCode,
   ExternalLink,
+  GitCommit,
   Lightbulb,
   Loader2,
+  MapPin,
+  MessageCircle,
   Star,
+  TriangleAlert,
+  Zap,
 } from "lucide-react";
-import { explainIssue } from "@/lib/api";
-import type { IssueExplanation } from "@/types";
+import { explainIssue, getImplementationPlan, sendMentorMessage } from "@/lib/api";
+import { ChatPanel } from "@/components/mentor/chat-panel";
+import type { IssueExplanation, ImplementationPlan } from "@/types";
 
 export default function IssueDetailPage() {
   const { data: session, status } = useSession();
@@ -32,6 +40,13 @@ export default function IssueDetailPage() {
   const [explanation, setExplanation] = useState<IssueExplanation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [plan, setPlan] = useState<ImplementationPlan | null>(null);
+  const [isPlanLoading, setIsPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planExpanded, setPlanExpanded] = useState(false);
+
+  const [mentorOpen, setMentorOpen] = useState(false);
 
   // Extract owner/repo and issue number from URL params
   const segments = params.id as string[] | undefined;
@@ -86,6 +101,33 @@ export default function IssueDetailPage() {
       controller.abort();
     };
   }, [session, status, owner, repo, issueNumber, hasValidParams, router, retryToken]);
+
+  const fetchPlan = async () => {
+    if (!session?.accessToken || !hasValidParams) return;
+    setIsPlanLoading(true);
+    setPlanError(null);
+    setPlanExpanded(true);
+    try {
+      const result = await getImplementationPlan(owner, repo, issueNumber, session.accessToken);
+      setPlan(result);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Failed to generate plan");
+    } finally {
+      setIsPlanLoading(false);
+    }
+  };
+
+  const handleMentorSend = async (message: string): Promise<string> => {
+    if (!session?.accessToken) throw new Error("Not authenticated");
+    const result = await sendMentorMessage(owner, repo, issueNumber, message, session.accessToken);
+    return result.response;
+  };
+
+  const complexityColor = {
+    low: "text-emerald-500",
+    medium: "text-amber-500",
+    high: "text-rose-500",
+  };
 
   if (status === "loading") {
     return (
@@ -168,6 +210,231 @@ export default function IssueDetailPage() {
               <Button variant="outline" size="sm" onClick={retry} className="shrink-0">
                 Try again
               </Button>
+            </div>
+          )}
+
+          {/* Implementation Plan Section */}
+          {explanation && (
+            <div className="mb-6">
+              {!plan && !isPlanLoading && (
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    onClick={fetchPlan}
+                    variant="outline"
+                    className="gap-2"
+                    disabled={isPlanLoading}
+                  >
+                    <Zap className="h-4 w-4 text-primary" />
+                    Generate Implementation Plan
+                  </Button>
+                  <Link
+                    href={`/commit?repo=${encodeURIComponent(`${owner}/${repo}`)}&issue_number=${issueNumber}&issue_title=${encodeURIComponent(explanation?.title ?? "")}`}
+                    className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    <GitCommit className="h-4 w-4 text-primary" />
+                    Generate Commit Message
+                  </Link>
+                </div>
+              )}
+
+              {isPlanLoading && (
+                <div className="p-4 rounded-lg border border-primary/20 bg-primary/5 flex items-center gap-3">
+                  <MapPin className="h-5 w-5 text-primary animate-pulse" />
+                  <span className="text-sm text-primary font-medium">
+                    AI is generating an implementation plan...
+                  </span>
+                  <Loader2 className="h-4 w-4 animate-spin text-primary ml-auto" />
+                </div>
+              )}
+
+              {planError && (
+                <div className="p-4 rounded-lg border border-destructive/20 bg-destructive/5 flex items-center justify-between gap-4">
+                  <p className="text-sm text-destructive">{planError}</p>
+                  <Button variant="outline" size="sm" onClick={fetchPlan} className="shrink-0">
+                    Try again
+                  </Button>
+                </div>
+              )}
+
+              {plan && (
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  {/* Plan header / toggle */}
+                  <button
+                    onClick={() => setPlanExpanded((v) => !v)}
+                    className="w-full flex items-center justify-between p-4 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <MapPin className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="font-semibold text-sm">{plan.title}</p>
+                        <p className="text-xs text-muted-foreground capitalize">
+                          Complexity:{" "}
+                          <span className={complexityColor[plan.estimated_complexity] ?? "text-foreground"}>
+                            {plan.estimated_complexity}
+                          </span>
+                          {plan.steps.length > 0 && ` · ${plan.steps.length} steps`}
+                        </p>
+                      </div>
+                    </div>
+                    {planExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+
+                  {planExpanded && (
+                    <div className="p-4 space-y-6">
+                      {/* Issue summary */}
+                      {plan.issue_summary && (
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {plan.issue_summary}
+                        </p>
+                      )}
+
+                      {/* Steps */}
+                      {plan.steps.length > 0 && (
+                        <div className="space-y-4">
+                          {plan.steps.map((step) => (
+                            <div
+                              key={step.step_number}
+                              className="flex gap-3"
+                            >
+                              <div className="flex-none w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold flex items-center justify-center mt-0.5">
+                                {step.step_number}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm mb-1">{step.title}</p>
+                                <p className="text-sm text-muted-foreground leading-relaxed">
+                                  {step.description}
+                                </p>
+                                {step.files_to_modify.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {step.files_to_modify.map((file, i) => (
+                                      <span
+                                        key={`${file}-${i}`}
+                                        className="text-xs font-mono bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground"
+                                      >
+                                        {file}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {step.code_hints && (
+                                  <p className="mt-2 text-xs text-muted-foreground italic">
+                                    Hint: {step.code_hints}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Prerequisite knowledge */}
+                      {plan.prerequisite_knowledge.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                            Prerequisite Knowledge
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {plan.prerequisite_knowledge.map((item, i) => (
+                              <Badge key={`${item}-${i}`} variant="secondary" className="text-xs">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Risks & Edge Cases */}
+                      {(plan.risks.length > 0 || plan.edge_cases.length > 0) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {plan.risks.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
+                                <TriangleAlert className="h-3 w-3" /> Risks
+                              </p>
+                              <ul className="space-y-1">
+                                {plan.risks.map((risk, i) => (
+                                  <li key={i} className="text-xs text-muted-foreground">
+                                    · {risk}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {plan.edge_cases.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                Edge Cases
+                              </p>
+                              <ul className="space-y-1">
+                                {plan.edge_cases.map((ec, i) => (
+                                  <li key={i} className="text-xs text-muted-foreground">
+                                    · {ec}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Testing strategy */}
+                      {plan.testing_strategy && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                            Testing Strategy
+                          </p>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {plan.testing_strategy}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mentor Chat Section */}
+          {explanation && (
+            <div className="mb-6">
+              <div className="rounded-lg border border-border/50 overflow-hidden">
+                <button
+                  onClick={() => setMentorOpen((v) => !v)}
+                  className="w-full flex items-center justify-between p-4 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <MessageCircle className="h-5 w-5 text-primary" />
+                    <div>
+                      <p className="font-semibold text-sm">Ask the Mentor</p>
+                      <p className="text-xs text-muted-foreground">
+                        Conversational guidance — I&apos;ll guide you, not solve it for you
+                      </p>
+                    </div>
+                  </div>
+                  {mentorOpen ? (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+
+                {mentorOpen && (
+                  <div className="h-96">
+                    <ChatPanel
+                      owner={owner}
+                      repo={repo}
+                      issueNumber={issueNumber}
+                      token={session?.accessToken ?? ""}
+                      onSendMessage={handleMentorSend}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

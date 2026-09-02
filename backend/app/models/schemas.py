@@ -150,3 +150,105 @@ class IssueExplanationResponse(BaseModel):
     learning_resources: list[str] = Field(default_factory=list)
     suggested_approach: str = ""
     files_to_explore: list[str] = Field(default_factory=list)
+
+
+# ========================
+# Implementation Plan Schemas
+# ========================
+
+class ImplementationStep(BaseModel):
+    """A single step in an implementation plan."""
+    model_config = ConfigDict(extra="ignore")
+
+    step_number: int
+    title: str
+    description: str
+    files_to_modify: list[str] = Field(default_factory=list)
+    code_hints: str = ""
+
+
+class ImplementationPlanRequest(BaseModel):
+    """Request to generate an implementation plan for a GitHub issue."""
+    owner: str
+    repo: str
+    issue_number: int
+
+
+class ImplementationPlanResponse(BaseModel):
+    """AI-generated implementation plan for a GitHub issue."""
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    issue_summary: str = ""
+    steps: list[ImplementationStep] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    edge_cases: list[str] = Field(default_factory=list)
+    testing_strategy: str = ""
+    estimated_complexity: str = Field("medium", description="low | medium | high")
+    prerequisite_knowledge: list[str] = Field(default_factory=list)
+    files_overview: list[str] = Field(default_factory=list)
+
+
+# ========================
+# Commit Message Schemas
+# ========================
+
+class CommitMessageRequest(BaseModel):
+    """Request to generate a conventional commit message."""
+    diff_text: str = Field("", max_length=10000, description="Git diff or code changes")
+    change_description: str = Field(..., max_length=2000, description="Plain English description of the change")
+    repo_full_name: str = Field(..., description="owner/repo format")
+    issue_title: str = Field("", description="Title of the related GitHub issue, if any")
+    issue_number: int | None = Field(None, description="Related issue number for context")
+
+
+class CommitMessageResponse(BaseModel):
+    """AI-generated conventional commit message."""
+    model_config = ConfigDict(extra="ignore")
+
+    subject: str = Field(..., description="Commit subject line (≤72 chars)")
+    body: str = Field("", description="Optional multi-line commit body")
+    full_message: str = Field(..., description="Complete commit message (subject + body)")
+    commit_type: str = Field("feat", description="Conventional commit type: feat|fix|docs|style|refactor|perf|test|chore")
+    scope: str = Field("", description="Optional scope in parentheses")
+    breaking_change: bool = Field(False, description="Whether this is a breaking change")
+    alternatives: list[str] = Field(default_factory=list, description="Alternative subject lines")
+
+
+# ========================
+# Mentor Chat Schemas
+# ========================
+
+class MentorChatRequest(BaseModel):
+    """Request to send a message to the Mentor Agent."""
+    owner: str
+    repo: str
+    issue_number: int
+    message: str = Field(..., max_length=2000, description="User's question or message")
+
+
+class MentorChatResponse(BaseModel):
+    """Response from the Mentor Agent."""
+    response: str = Field(..., description="Mentor's plain-text reply")
+    session_active: bool = Field(True, description="Whether the session is still alive")
+
+
+# ========================
+# Saved Issues Schemas
+# ========================
+
+class SaveIssueRequest(BaseModel):
+    """Request to bookmark an issue."""
+    repo_full_name: str = Field(..., description="owner/repo format")
+    issue_number: int
+    title: str = ""
+    html_url: str = ""
+
+
+class SavedIssueResponse(BaseModel):
+    """A bookmarked issue."""
+    repo_full_name: str
+    issue_number: int
+    title: str
+    html_url: str
+    saved_at: str

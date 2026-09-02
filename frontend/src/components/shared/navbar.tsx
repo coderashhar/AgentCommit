@@ -5,7 +5,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { GitHubIcon } from "@/components/shared/github-icon";
-import { Bot, Menu, X, LogOut, LayoutDashboard } from "lucide-react";
+import { Bot, GitCommit, Menu, X, LogOut, LayoutDashboard } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 
@@ -36,13 +36,22 @@ export function Navbar() {
           {/* Desktop nav links */}
           <div className="hidden md:flex items-center gap-6">
             {isAuthenticated && (
-              <Link
-                href="/dashboard"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
-              >
-                <LayoutDashboard className="h-3.5 w-3.5" />
-                Dashboard
-              </Link>
+              <>
+                <Link
+                  href="/dashboard"
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                >
+                  <LayoutDashboard className="h-3.5 w-3.5" />
+                  Dashboard
+                </Link>
+                <Link
+                  href="/commit"
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+                >
+                  <GitCommit className="h-3.5 w-3.5" />
+                  Commit
+                </Link>
+              </>
             )}
             <Link
               href="#features"
@@ -110,13 +119,22 @@ export function Navbar() {
           >
             <div className="px-4 py-4 space-y-3">
               {isAuthenticated && (
-                <Link
-                  href="/dashboard"
-                  className="block text-sm text-muted-foreground"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Dashboard
-                </Link>
+                <>
+                  <Link
+                    href="/dashboard"
+                    className="block text-sm text-muted-foreground"
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    Dashboard
+                  </Link>
+                  <Link
+                    href="/commit"
+                    className="block text-sm text-muted-foreground"
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    Commit
+                  </Link>
+                </>
               )}
               <Link
                 href="#features"

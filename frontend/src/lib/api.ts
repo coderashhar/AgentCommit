@@ -10,6 +10,12 @@ import type {
   RepoRecommendationResponse,
   IssueDiscoveryResponse,
   IssueExplanation,
+  ImplementationPlan,
+  CommitMessageRequest,
+  CommitMessageResponse,
+  MentorChatResponse,
+  SaveIssueRequest,
+  SavedIssueResponse,
 } from "@/types";
 import { API_BASE_URL } from "@/lib/constants";
 
@@ -179,6 +185,117 @@ export async function discoverIssues(
       method: "POST",
       body: JSON.stringify(params),
       signal,
+    },
+    token,
+  );
+}
+
+// ========================
+// Saved Issues
+// ========================
+
+/**
+ * Bookmark an issue to revisit later.
+ */
+export async function saveIssue(
+  params: SaveIssueRequest,
+  token: string,
+): Promise<SavedIssueResponse> {
+  return apiFetch<SavedIssueResponse>(
+    "/api/saved/issues",
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+    },
+    token,
+  );
+}
+
+/**
+ * List all issues bookmarked by the authenticated user.
+ */
+export async function getSavedIssues(token: string): Promise<SavedIssueResponse[]> {
+  return apiFetch<SavedIssueResponse[]>("/api/saved/issues", {}, token);
+}
+
+/**
+ * Remove a bookmarked issue.
+ */
+export async function unsaveIssue(
+  repoOwner: string,
+  repoName: string,
+  issueNumber: number,
+  token: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/saved/issues/${repoOwner}/${repoName}/${issueNumber}`,
+    { method: "DELETE" },
+    token,
+  );
+}
+
+/**
+ * Generate a step-by-step implementation plan for a specific GitHub issue.
+ */
+export async function getImplementationPlan(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  token: string,
+  signal?: AbortSignal,
+): Promise<ImplementationPlan> {
+  return apiFetch<ImplementationPlan>(
+    "/api/issues/plan",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        owner,
+        repo,
+        issue_number: issueNumber,
+      }),
+      signal,
+    },
+    token,
+  );
+}
+
+/**
+ * Generate a conventional commit message from a diff or change description.
+ */
+export async function generateCommitMessage(
+  params: CommitMessageRequest,
+  token: string,
+): Promise<CommitMessageResponse> {
+  return apiFetch<CommitMessageResponse>(
+    "/api/commit/generate",
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+    },
+    token,
+  );
+}
+
+/**
+ * Send a message to the Mentor Agent for a specific GitHub issue.
+ */
+export async function sendMentorMessage(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  message: string,
+  token: string,
+): Promise<MentorChatResponse> {
+  return apiFetch<MentorChatResponse>(
+    "/api/mentor/chat",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        owner,
+        repo,
+        issue_number: issueNumber,
+        message,
+      }),
     },
     token,
   );
