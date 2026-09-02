@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.tools.repo_ranking import (
     ExperienceTier,
+    IssueQualifier,
     TIER_BANDS,
     build_repo_query,
     format_match_reason,
@@ -99,6 +100,64 @@ class TestBuildRepoQuery:
     def test_is_public(self, fixed_today):
         query = build_repo_query(ExperienceTier.BEGINNER, today=fixed_today)
         assert "is:public" in query
+
+
+# ---------- IssueQualifier splitting ----------
+
+
+class TestIssueQualifier:
+    """Conjoining both labelled-issue qualifiers starves small ecosystems.
+
+    Measured against live GitHub for Elixir at the relaxed beginner band:
+    both-conjoined returns 2 repositories, good-first-issues alone returns 5,
+    help-wanted-issues alone returns 11, and the union of the two is 14.
+    """
+
+    def test_both_is_the_default(self, fixed_today):
+        default_query = build_repo_query(ExperienceTier.BEGINNER, today=fixed_today)
+        explicit_query = build_repo_query(
+            ExperienceTier.BEGINNER, issue_qualifier=IssueQualifier.BOTH, today=fixed_today
+        )
+        assert default_query == explicit_query
+
+    def test_both_requires_each_qualifier(self, fixed_today):
+        query = build_repo_query(
+            ExperienceTier.BEGINNER, issue_qualifier=IssueQualifier.BOTH, today=fixed_today
+        )
+        assert "good-first-issues:>" in query
+        assert "help-wanted-issues:>" in query
+
+    def test_good_first_omits_help_wanted(self, fixed_today):
+        query = build_repo_query(
+            ExperienceTier.BEGINNER, issue_qualifier=IssueQualifier.GOOD_FIRST, today=fixed_today
+        )
+        assert "good-first-issues:>" in query
+        assert "help-wanted-issues:>" not in query
+
+    def test_help_wanted_omits_good_first(self, fixed_today):
+        query = build_repo_query(
+            ExperienceTier.BEGINNER, issue_qualifier=IssueQualifier.HELP_WANTED, today=fixed_today
+        )
+        assert "help-wanted-issues:>" in query
+        assert "good-first-issues:>" not in query
+
+    def test_split_still_keeps_star_ceiling(self, fixed_today):
+        """Splitting qualifiers must not become a backdoor around the tier ceiling."""
+        for qualifier in IssueQualifier:
+            query = build_repo_query(
+                ExperienceTier.BEGINNER,
+                relaxed=True,
+                issue_qualifier=qualifier,
+                today=fixed_today,
+            )
+            assert "..20000" in query
+
+    def test_advanced_tier_has_no_good_first_requirement(self, fixed_today):
+        """Advanced omits good-first-issues entirely, so the split is a no-op there."""
+        query = build_repo_query(
+            ExperienceTier.ADVANCED, issue_qualifier=IssueQualifier.GOOD_FIRST, today=fixed_today
+        )
+        assert "good-first-issues:>" not in query
 
 
 # ---------- repo_is_rejected ----------

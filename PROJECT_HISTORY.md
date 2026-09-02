@@ -356,3 +356,46 @@ landed, in violation of AGENTS.md's history rule. Reconstructed from the commit 
 - Gemini free-tier 429 handling is mitigated (the deterministic fallback is now
   tier-correct) but not resolved — a request can still stall ~100s across 5 retries
   before falling through.
+
+---
+
+## 2026-09-03 — Niche-Language Recommendation Fix
+
+#### Completed
+- Diagnosed and fixed labelled-issue query starvation for small language ecosystems,
+  found by running the tier queries against live GitHub rather than mocks.
+- Split the relaxed pass's `good-first-issues` / `help-wanted-issues` qualifiers into
+  separate unioned queries via a new `IssueQualifier` enum.
+- Flattened `_search_tier_repos` into explicit ordered passes, removing the previous
+  three-level nesting with three separate cap checks at different depths.
+- Added 6 `IssueQualifier` query-builder tests and 3 `_search_tier_repos` escalation
+  tests.
+
+#### Files Modified
+- `backend/app/tools/repo_ranking.py`
+- `backend/app/agents/coordinator.py`
+- `backend/tests/test_repo_ranking.py`
+- `backend/tests/test_coordinator.py`
+- `PROJECT_HISTORY.md`
+
+#### Decisions
+- Split the qualifiers rather than retuning the tier bands. GitHub search has no `OR`
+  across qualifiers, and loosening the bands would have muddied attribution — the
+  defect was conjoining two independent signals, not the bands being wrong.
+- The star ceiling is still never relaxed in any pass, including the new split
+  variants; a test asserts this for every `IssueQualifier` value.
+
+#### Measurements (live GitHub, beginner tier, relaxed band)
+- Elixir: 2 repositories conjoined → 14 unioned (`good-first-issues` alone 5,
+  `help-wanted-issues` alone 11).
+- Mainstream languages were already healthy and are unchanged: JavaScript 35,
+  Python 105, TypeScript 55.
+
+#### Known Issues / Follow-up Tasks
+- **No CI exists.** `.github/workflows/` is absent, so the 193-test suite runs only
+  locally and nothing gates a pull request.
+- `_search_tier_repos` had no direct test coverage before this change — a missing
+  import broke the real code path while every query-builder unit test still passed.
+  Other coordinator search paths may have the same gap.
+- End-to-end verification against real GitHub OAuth + Gemini is still unperformed;
+  see `MANUAL_TESTS.md` (currently untracked).

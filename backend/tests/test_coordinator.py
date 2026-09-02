@@ -2,6 +2,8 @@
 
 import pytest
 
+from app.agents import coordinator
+from app.tools.repo_ranking import ExperienceTier
 from app.agents.coordinator import (
     _parse_json_response,
     _ordered_unique,
@@ -136,3 +138,83 @@ class TestInferKeywords:
         repos = [{"name": "xyz", "description": "something", "topics": []}]
         result = _infer_keywords(repos, FRAMEWORK_KEYWORDS)
         assert result == []
+
+
+# ---------- _search_tier_repos escalation ----------
+
+
+class TestSearchTierReposEscalation:
+    """The strict->relaxed escalation and its split labelled-issue queries.
+
+    These exercise the real code path rather than the query builder in isolation:
+    a missing IssueQualifier import once broke this while every builder unit test
+    still passed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_escalates_to_split_queries_when_strict_is_empty(self, monkeypatch):
+        seen: list[str] = []
+
+        async def fake_search(query, token, sort="", per_page=25):
+            seen.append(query)
+            return []
+
+        monkeypatch.setattr(coordinator, "search_github_repos", fake_search)
+        await coordinator._search_tier_repos(
+            ExperienceTier.BEGINNER, ["Elixir"], [], [], "tok"
+        )
+
+        both = [q for q in seen if "good-first-issues" in q and "help-wanted-issues" in q]
+        good_first_only = [
+            q for q in seen if "good-first-issues" in q and "help-wanted-issues" not in q
+        ]
+        help_wanted_only = [
+            q for q in seen if "help-wanted-issues" in q and "good-first-issues" not in q
+        ]
+
+        assert both, "strict pass should conjoin both qualifiers"
+        assert good_first_only, "relaxed pass should issue a good-first-issues-only query"
+        assert help_wanted_only, "relaxed pass should issue a help-wanted-issues-only query"
+
+    @pytest.mark.asyncio
+    async def test_productive_strict_pass_does_not_escalate(self, monkeypatch):
+        """A strict pass that finds anything must not spend calls on the relaxed pass."""
+        seen: list[str] = []
+
+        async def fake_search(query, token, sort="", per_page=25):
+            seen.append(query)
+            return [
+                {
+                    "full_name": "acme/widget",
+                    "stargazers_count": 3000,
+                    "open_issues_count": 20,
+                    "html_url": "https://example.test",
+                }
+            ]
+
+        monkeypatch.setattr(coordinator, "search_github_repos", fake_search)
+        await coordinator._search_tier_repos(
+            ExperienceTier.BEGINNER, ["Python"], [], [], "tok"
+        )
+
+        split_queries = [
+            q for q in seen if "good-first-issues" in q and "help-wanted-issues" not in q
+        ]
+        assert not split_queries, "should not escalate after a productive strict pass"
+
+    @pytest.mark.asyncio
+    async def test_never_sorts_by_stars(self, monkeypatch):
+        """Star-sorting is what surfaced mega-repos; no pass may reintroduce it."""
+        sorts: list[str] = []
+
+        async def fake_search(query, token, sort="", per_page=25):
+            sorts.append(sort)
+            return []
+
+        monkeypatch.setattr(coordinator, "search_github_repos", fake_search)
+        await coordinator._search_tier_repos(
+            ExperienceTier.BEGINNER, ["Rust"], [], [], "tok"
+        )
+
+        assert sorts, "expected at least one search"
+        assert "stars" not in sorts
