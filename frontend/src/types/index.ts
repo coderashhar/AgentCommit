@@ -107,6 +107,92 @@ export interface IssueExplanation {
 }
 
 // ========================
+// Saved Issues Types
+// ========================
+
+export interface SaveIssueRequest {
+  repo_full_name: string;
+  issue_number: number;
+  title: string;
+  html_url: string;
+}
+
+export interface SavedIssueResponse {
+  repo_full_name: string;
+  issue_number: number;
+  title: string;
+  html_url: string;
+  saved_at: string;
+}
+
+// ========================
+// Implementation Plan Types
+// ========================
+
+export interface ImplementationStep {
+  step_number: number;
+  title: string;
+  description: string;
+  files_to_modify: string[];
+  code_hints: string;
+}
+
+export interface ImplementationPlan {
+  title: string;
+  issue_summary: string;
+  steps: ImplementationStep[];
+  risks: string[];
+  edge_cases: string[];
+  testing_strategy: string;
+  estimated_complexity: "low" | "medium" | "high";
+  prerequisite_knowledge: string[];
+  files_overview: string[];
+}
+
+// ========================
+// Commit Message Types
+// ========================
+
+export interface CommitMessageRequest {
+  diff_text?: string;
+  change_description: string;
+  repo_full_name: string;
+  issue_title?: string;
+  issue_number?: number;
+}
+
+export interface CommitMessageResponse {
+  subject: string;
+  body: string;
+  full_message: string;
+  commit_type: string;
+  scope: string;
+  breaking_change: boolean;
+  alternatives: string[];
+}
+
+// ========================
+// Mentor Chat Types
+// ========================
+
+export interface MentorChatRequest {
+  owner: string;
+  repo: string;
+  issue_number: number;
+  message: string;
+}
+
+export interface MentorChatResponse {
+  response: string;
+  session_active: boolean;
+}
+
+export interface ChatMessage {
+  role: "user" | "mentor";
+  content: string;
+}
+
+// ========================
 // Agent Status Types
 // ========================
 

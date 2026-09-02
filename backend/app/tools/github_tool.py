@@ -287,6 +287,94 @@ async def fetch_repo_readme(
             return f"Error: GitHub API failed with status {e.response.status_code}. Detail: {e.response.text}"
 
 
+async def fetch_repo_tree(
+    owner: str,
+    repo: str,
+    github_token: str,
+    path: str = "",
+) -> list[dict]:
+    """Fetch the file/directory listing at a given path in a repository.
+
+    Uses the GitHub Contents API to list directory contents. For the repo root,
+    pass `path=""`. Returns an empty list on 404 (path doesn't exist).
+
+    Each entry contains at minimum: `name`, `path`, `type` ('file' or 'dir'),
+    `size`, and `html_url`.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        github_token: OAuth access token.
+        path: Directory path within the repo. Empty string means the root.
+
+    Returns:
+        List of file/directory entry dicts, or a single-element list with an
+        `error` key on failure.
+    """
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents"
+    if path:
+        url = f"{url}/{path.lstrip('/')}"
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        if response.status_code == 404:
+            return []
+        try:
+            response.raise_for_status()
+            data = response.json()
+            # Contents API returns a list for directories, dict for files.
+            return data if isinstance(data, list) else [data]
+        except httpx.HTTPStatusError as e:
+            return [{"error": f"GitHub API failed with status {e.response.status_code}", "detail": e.response.text}]
+
+
+async def fetch_file_content(
+    owner: str,
+    repo: str,
+    path: str,
+    github_token: str,
+) -> str:
+    """Fetch the decoded text content of a single file from a repository.
+
+    Uses the GitHub Contents API with the raw media type so the response body
+    is the file's content directly (not base64-encoded JSON). Returns an empty
+    string on 404.
+
+    Files larger than 1 MB are rejected by the GitHub Contents API; for those,
+    callers should use the Git Blobs API or fall back to a truncated summary.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        path: File path within the repo (e.g. "src/main.py").
+        github_token: OAuth access token.
+
+    Returns:
+        File content as a UTF-8 string, or an empty string if not found.
+    """
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        response = await client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path.lstrip('/')}",
+            headers={
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github.raw+json",
+            },
+        )
+        if response.status_code == 404:
+            return ""
+        try:
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPStatusError as e:
+            return f"Error fetching {path}: GitHub API returned {e.response.status_code}"
+
+
 async def fetch_repo_languages(
     owner: str,
     repo: str,

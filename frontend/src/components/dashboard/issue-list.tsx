@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MessageSquare, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { MessageSquare, ArrowRight, Bookmark, BookmarkCheck } from "lucide-react";
 import { timeAgo, difficultyToStars } from "@/lib/utils";
+import { saveIssue, unsaveIssue } from "@/lib/api";
 import type { DiscoveredIssue } from "@/types";
 
 interface IssueListProps {
@@ -21,6 +25,38 @@ const difficultyColors: Record<string, string> = {
 };
 
 export function IssueList({ issues, isLoading, isError = false }: IssueListProps) {
+  const { data: session } = useSession();
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
+
+  const issueKey = (issue: DiscoveredIssue) => `${issue.repo_full_name}#${issue.number}`;
+
+  const toggleSave = async (e: React.MouseEvent, issue: DiscoveredIssue) => {
+    e.preventDefault(); // prevent navigating to issue detail
+    const token = session?.accessToken;
+    if (!token) return;
+
+    const key = issueKey(issue);
+    setSavingKeys((prev) => new Set(prev).add(key));
+
+    try {
+      if (savedKeys.has(key)) {
+        const [owner, repo] = issue.repo_full_name.split("/");
+        await unsaveIssue(owner, repo, issue.number, token);
+        setSavedKeys((prev) => { const next = new Set(prev); next.delete(key); return next; });
+      } else {
+        await saveIssue(
+          { repo_full_name: issue.repo_full_name, issue_number: issue.number, title: issue.title, html_url: issue.html_url },
+          token,
+        );
+        setSavedKeys((prev) => new Set(prev).add(key));
+      }
+    } catch {
+      // fail silently — saving is non-critical
+    } finally {
+      setSavingKeys((prev) => { const next = new Set(prev); next.delete(key); return next; });
+    }
+  };
   if (isLoading) {
     return (
       <Card className="border-border/50">
@@ -94,7 +130,21 @@ export function IssueList({ issues, isLoading, isError = false }: IssueListProps
                   {issue.repo_full_name} #{issue.number}
                 </p>
               </div>
-              <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => toggleSave(e, issue)}
+                  disabled={savingKeys.has(issueKey(issue))}
+                  aria-label={savedKeys.has(issueKey(issue)) ? "Unsave issue" : "Save issue"}
+                >
+                  {savedKeys.has(issueKey(issue))
+                    ? <BookmarkCheck className="h-4 w-4 text-primary" />
+                    : <Bookmark className="h-4 w-4" />}
+                </Button>
+                <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
             </div>
 
             {issue.body_preview && (

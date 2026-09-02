@@ -11,6 +11,8 @@ from app.models.schemas import (
     IssueDiscoveryResponse,
     IssueExplanationRequest,
     IssueExplanationResponse,
+    ImplementationPlanRequest,
+    ImplementationPlanResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,3 +70,29 @@ async def explain_issue(
     except Exception:
         logger.exception("Issue explanation failed")
         raise HTTPException(status_code=500, detail="Issue explanation failed. Please try again.")
+
+
+@router.post("/plan")
+async def generate_implementation_plan(
+    request: ImplementationPlanRequest,
+    authorization: str = Header(..., description="GitHub access token"),
+) -> JSONResponse:
+    """Generate a step-by-step implementation plan for a GitHub issue.
+
+    Triggers the Implementation Planner Agent via Google ADK.
+    """
+    token = await require_github_token(authorization)
+
+    from app.agents.coordinator import run_implementation_plan
+
+    try:
+        result = await run_implementation_plan(
+            owner=request.owner,
+            repo=request.repo,
+            issue_number=request.issue_number,
+            github_token=token,
+        )
+        return JSONResponse(content=result.model_dump())
+    except Exception:
+        logger.exception("Implementation plan generation failed")
+        raise HTTPException(status_code=500, detail="Implementation plan generation failed. Please try again.")

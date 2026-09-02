@@ -22,8 +22,12 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+from app.agents.commit_agent import build_commit_agent
 from app.agents.explainer_agent import build_explainer_agent
 from app.agents.issue_agent import build_issue_agent
+from app.agents.mentor_agent import build_mentor_agent
+from app.agents.mentor_session import get_session_id, store_session_id
+from app.agents.planner_agent import build_planner_agent
 from app.agents.profile_agent import build_profile_agent
 from app.agents.repo_agent import build_repo_agent
 from app.models.schemas import (
@@ -33,12 +37,18 @@ from app.models.schemas import (
     IssueDiscoveryResponse,
     DiscoveredIssue,
     IssueExplanationResponse,
+    ImplementationPlanResponse,
+    ImplementationStep,
+    MentorChatResponse,
+    CommitMessageRequest,
+    CommitMessageResponse,
 )
 from app.tools.github_tool import (
     fetch_github_profile,
     fetch_issue_details,
     fetch_repo,
     fetch_repo_readme,
+    fetch_repo_tree,
     fetch_user_repos,
     search_github_issues,
     search_github_repos,
@@ -59,6 +69,8 @@ from app.tools.repo_ranking import (
     score_repo,
 )
 from app.tools.utils import build_cache_key, cache_get, cache_set, truncate_text
+from app.database.connection import async_session
+from app.database.crud import save_profile_analysis as _db_save_profile
 
 logger = logging.getLogger(__name__)
 
@@ -842,8 +854,19 @@ async def run_profile_analysis(
 
     if result.username:
         await cache_set(cache_key, result.model_dump(), ttl_seconds=3600)
+        # Persist to PostgreSQL fire-and-forget — never block the API response.
+        asyncio.ensure_future(_persist_profile_analysis(result))
 
     return result
+
+
+async def _persist_profile_analysis(result: ProfileAnalysisResponse) -> None:
+    """Write a profile analysis to PostgreSQL in the background."""
+    try:
+        async with async_session() as session:
+            await _db_save_profile(session, result.username, result)
+    except Exception as e:
+        logger.warning("Failed to persist profile analysis for %s: %s", result.username, str(e))
 
 
 async def run_repo_recommendation(
@@ -1013,3 +1036,353 @@ async def run_issue_explanation(
         await cache_set(cache_key, result.model_dump(), ttl_seconds=7200)
 
     return result
+
+
+async def _fallback_implementation_plan(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    github_token: str,
+) -> ImplementationPlanResponse:
+    """Build a basic implementation plan from issue details + README when the agent fails."""
+    issue = await fetch_issue_details(owner, repo, issue_number, github_token)
+    if issue.get("error"):
+        raise RuntimeError(issue["error"])
+
+    readme = await fetch_repo_readme(owner, repo, github_token)
+    tree = await fetch_repo_tree(owner, repo, github_token)
+
+    title = issue.get("title") or f"{owner}/{repo} issue #{issue_number}"
+    body = issue.get("body") or ""
+    labels = [
+        label.get("name", "")
+        for label in issue.get("labels") or []
+        if isinstance(label, dict) and label.get("name")
+    ]
+
+    root_files = [entry.get("path", "") for entry in tree if isinstance(entry, dict)]
+    has_tests = any("test" in p.lower() for p in root_files)
+    has_contributing = any("contributing" in p.lower() for p in root_files)
+
+    steps = [
+        ImplementationStep(
+            step_number=1,
+            title="Read the issue and understand the problem",
+            description=(
+                "Read the full issue body, all comments, and any linked issues or PRs. "
+                "Reproduce the bug or understand the requested feature before touching code."
+            ),
+            files_to_modify=[],
+            code_hints="",
+        ),
+        ImplementationStep(
+            step_number=2,
+            title="Explore the repository structure",
+            description=(
+                f"Clone the repository and browse the file tree. "
+                f"{'Read CONTRIBUTING.md for project conventions. ' if has_contributing else ''}"
+                f"Identify which module or file the change belongs in."
+            ),
+            files_to_modify=["CONTRIBUTING.md"] if has_contributing else [],
+            code_hints="",
+        ),
+        ImplementationStep(
+            step_number=3,
+            title="Implement the change",
+            description=(
+                "Make the smallest correct change that resolves the issue. "
+                "Follow the existing code style and patterns in the file you modify."
+            ),
+            files_to_modify=[],
+            code_hints="",
+        ),
+        ImplementationStep(
+            step_number=4,
+            title="Test your change",
+            description=(
+                f"{'Run the existing test suite to verify nothing is broken. ' if has_tests else ''}"
+                "Add a test case for the new behaviour if appropriate. "
+                "Manually verify the fix resolves the reported problem."
+            ),
+            files_to_modify=[],
+            code_hints="",
+        ),
+    ]
+
+    testing_strategy = (
+        "Run the project test suite before and after your change. "
+        "Add a unit test that covers the specific scenario described in the issue."
+        if has_tests
+        else "The repository does not appear to have an automated test suite. "
+             "Manually verify your change resolves the issue before opening a PR."
+    )
+
+    return ImplementationPlanResponse(
+        title=f"Implement: {title}",
+        issue_summary=truncate_text(body, 500) if body else f"See {owner}/{repo}#{issue_number} on GitHub.",
+        steps=steps,
+        risks=["Existing behaviour may depend on the current implementation — check for callers/dependants."],
+        edge_cases=["Empty or null inputs", "Edge values at boundary conditions"],
+        testing_strategy=testing_strategy,
+        estimated_complexity="medium",
+        prerequisite_knowledge=_ordered_unique(labels + ["Git", "GitHub pull requests"]),
+        files_overview=root_files[:20],
+    )
+
+
+async def run_implementation_plan(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    github_token: str,
+) -> ImplementationPlanResponse:
+    """Run the Implementation Planner Agent for a specific GitHub issue.
+
+    Results are cached in Redis for 2 hours (plans are stable unless the issue changes).
+    """
+    cache_key = build_cache_key("plan", f"{owner}/{repo}", str(issue_number))
+    cached = await cache_get(cache_key)
+    if cached:
+        logger.info("Returning cached implementation plan for %s/%s#%d", owner, repo, issue_number)
+        return ImplementationPlanResponse(**cached)
+
+    message = (
+        f"Generate an implementation plan for GitHub issue #{issue_number} "
+        f"in the repository '{owner}/{repo}'.\n"
+        f"Fetch the issue details, browse the repository structure, read key files, "
+        f"then return a JSON implementation plan."
+    )
+
+    try:
+        agent = build_planner_agent(github_token)
+        response = await _run_agent(agent, message, f"plan-{owner}-{repo}-{issue_number}")
+        data = _parse_json_response(response)
+
+        # steps may arrive as plain dicts — normalise them
+        raw_steps = data.get("steps") or []
+        data["steps"] = [
+            step if isinstance(step, dict) else {} for step in raw_steps
+        ]
+
+        result = ImplementationPlanResponse(**data)
+
+        # Flag any files_overview paths that don't exist in the root tree so the
+        # frontend can warn the user (plan may propose new files — that's fine).
+        if result.files_overview:
+            tree = await fetch_repo_tree(owner, repo, github_token)
+            existing_paths = {entry.get("path", "") for entry in tree if isinstance(entry, dict)}
+            # Only log; don't remove — proposed new files are legitimate.
+            missing = [p for p in result.files_overview if p not in existing_paths]
+            if missing:
+                logger.info(
+                    "Plan for %s/%s#%d references %d path(s) not in root tree (may be new files): %s",
+                    owner, repo, issue_number, len(missing), missing,
+                )
+
+    except Exception as e:
+        logger.warning("Planner agent failed (%s); using fallback plan: %s", type(e).__name__, str(e))
+        result = await _fallback_implementation_plan(owner, repo, issue_number, github_token)
+
+    if result.title:
+        await cache_set(cache_key, result.model_dump(), ttl_seconds=7200)
+
+    return result
+
+
+async def run_mentor_chat(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    user_message: str,
+    username: str,
+    github_token: str,
+) -> MentorChatResponse:
+    """Send a message to the Mentor Agent, preserving conversation history across calls.
+
+    Sessions are keyed by (username, owner/repo#issue_number) and expire after 1 hour
+    via the in-memory session store. Each call reuses the existing ADK session so the
+    agent has full conversation history.
+
+    Unlike other coordinator functions, this path never caches: every message must
+    reach the agent so the conversation is coherent.
+    """
+    session_id = get_session_id(username, owner, repo, issue_number)
+
+    # First message in a new session: prime the agent with issue context.
+    if session_id is None:
+        first_message = (
+            f"We're going to discuss GitHub issue #{issue_number} in '{owner}/{repo}'. "
+            f"Please fetch the issue details and the repository README so you have context. "
+            f"Then answer the developer's first question: {user_message}"
+        )
+    else:
+        first_message = user_message
+
+    runner = Runner(
+        agent=build_mentor_agent(github_token),
+        app_name="agentcommit",
+        session_service=session_service,
+    )
+
+    if session_id is None:
+        session = await session_service.create_session(
+            app_name="agentcommit",
+            user_id=username,
+        )
+        session_id = session.id
+        store_session_id(username, owner, repo, issue_number, session_id)
+
+    user_content = types.Content(
+        role="user",
+        parts=[types.Part(text=first_message)],
+    )
+
+    try:
+        final_response = ""
+        async for event in runner.run_async(
+            session_id=session_id,
+            user_id=username,
+            new_message=user_content,
+        ):
+            text = _event_text(event)
+            if text:
+                final_response = text
+
+        if not final_response:
+            final_response = "I'm not sure how to help with that. Could you rephrase your question?"
+
+        return MentorChatResponse(response=final_response, session_active=True)
+
+    except Exception as e:
+        error_str = str(e)
+        is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
+        if is_rate_limit:
+            logger.warning("Mentor agent rate-limited for %s/%s#%d: %s", owner, repo, issue_number, error_str)
+            return MentorChatResponse(
+                response="I'm temporarily rate-limited by the AI service. Please wait a moment and try again.",
+                session_active=True,
+            )
+        logger.exception("Mentor agent failed for %s/%s#%d", owner, repo, issue_number)
+        return MentorChatResponse(
+            response="I encountered an error. Please try again.",
+            session_active=True,
+        )
+
+
+def _fallback_commit_message(request: CommitMessageRequest) -> CommitMessageResponse:
+    """Infer a conventional commit message from keywords in the change description.
+
+    Runs entirely in-process with no I/O — safe to call when the agent is unavailable.
+    """
+    desc = (request.change_description + " " + request.issue_title).lower()
+
+    # Determine type from keywords — checked in priority order.
+    if any(kw in desc for kw in ("break", "breaking", "incompatible", "remove support")):
+        commit_type = "refactor"
+        breaking = True
+    elif any(kw in desc for kw in ("fix", "bug", "error", "crash", "issue", "resolve", "patch")):
+        commit_type = "fix"
+        breaking = False
+    elif any(kw in desc for kw in ("doc", "readme", "comment", "docstring", "changelog")):
+        commit_type = "docs"
+        breaking = False
+    elif any(kw in desc for kw in ("test", "spec", "coverage", "pytest", "unittest")):
+        commit_type = "test"
+        breaking = False
+    elif any(kw in desc for kw in ("refactor", "restructure", "reorganize", "cleanup", "clean up")):
+        commit_type = "refactor"
+        breaking = False
+    elif any(kw in desc for kw in ("perf", "performance", "optim", "speed", "faster", "memory")):
+        commit_type = "perf"
+        breaking = False
+    elif any(kw in desc for kw in ("chore", "bump", "upgrade", "dependency", "deps", "ci", "build")):
+        commit_type = "chore"
+        breaking = False
+    elif any(kw in desc for kw in ("style", "format", "lint", "whitespace", "indent")):
+        commit_type = "style"
+        breaking = False
+    else:
+        commit_type = "feat"
+        breaking = False
+
+    # Derive a short description — use issue title if available, else truncate desc.
+    short_desc = request.issue_title.strip() or request.change_description.strip()
+    # Trim to ≤60 chars to leave room for type prefix
+    if len(short_desc) > 60:
+        short_desc = short_desc[:57].rstrip() + "..."
+
+    # Normalise to lower-case imperative (simple: just lower-case first char)
+    if short_desc:
+        short_desc = short_desc[0].lower() + short_desc[1:]
+
+    subject = f"{commit_type}: {short_desc}"
+    # Hard cap at 72 chars
+    if len(subject) > 72:
+        subject = subject[:69] + "..."
+
+    # Build body from change_description if it adds detail beyond the title.
+    body_lines: list[str] = []
+    if request.change_description and request.change_description.strip().lower() != short_desc.lower():
+        body_lines.append(request.change_description.strip())
+    if request.issue_number:
+        body_lines.append(f"\nCloses #{request.issue_number}")
+
+    body = "\n".join(body_lines)
+    full_message = subject + ("\n\n" + body if body else "")
+
+    alternatives = [
+        f"chore: {short_desc}" if commit_type != "chore" else f"feat: {short_desc}",
+        f"refactor: {short_desc}" if commit_type != "refactor" else f"fix: {short_desc}",
+    ]
+
+    return CommitMessageResponse(
+        subject=subject,
+        body=body,
+        full_message=full_message,
+        commit_type=commit_type,
+        scope="",
+        breaking_change=breaking,
+        alternatives=alternatives,
+    )
+
+
+async def run_commit_message(
+    request: CommitMessageRequest,
+    github_token: str,
+) -> CommitMessageResponse:
+    """Run the Commit Message Agent to generate a conventional commit message.
+
+    No caching — every diff is unique. Falls back to keyword heuristic when the
+    agent is unavailable.
+    """
+    owner, _, repo_name = request.repo_full_name.partition("/")
+
+    # Build the prompt: include diff if provided, issue context if available.
+    issue_ctx = ""
+    if request.issue_number and owner and repo_name:
+        issue_ctx = (
+            f"Related issue: #{request.issue_number} — {request.issue_title}\n"
+            f"You may call get_issue_details('{owner}', '{repo_name}', {request.issue_number}) "
+            f"for full issue context.\n\n"
+        )
+
+    diff_section = ""
+    if request.diff_text.strip():
+        diff_section = f"Git diff:\n```\n{request.diff_text}\n```\n\n"
+
+    message = (
+        f"{issue_ctx}"
+        f"{diff_section}"
+        f"Change description: {request.change_description}\n\n"
+        f"Repository: {request.repo_full_name}\n\n"
+        f"Generate a conventional commit message as a JSON object."
+    )
+
+    try:
+        agent = build_commit_agent(github_token)
+        response = await _run_agent(agent, message, f"commit-{request.repo_full_name}")
+        data = _parse_json_response(response)
+        return CommitMessageResponse(**data)
+    except Exception as e:
+        logger.warning("Commit agent failed (%s); using keyword fallback: %s", type(e).__name__, str(e))
+        return _fallback_commit_message(request)
