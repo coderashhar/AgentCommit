@@ -62,6 +62,7 @@ from app.tools.issue_ranking import (
 )
 from app.tools.repo_ranking import (
     ExperienceTier,
+    IssueQualifier,
     RepoScore,
     build_repo_query,
     format_match_reason,
@@ -422,29 +423,53 @@ async def _search_tier_repos(
     candidates: dict[str, dict] = {}
 
     for term in search_terms:
-        for relaxed in (False, True):
-            if len(candidates) >= MAX_CANDIDATE_REPOS:
-                break
-            query = build_repo_query(tier, language=term, relaxed=relaxed)
-            for sort in ("help-wanted-issues", ""):
-                repos = await search_github_repos(query, github_token, sort=sort, per_page=25)
-                found_any = False
-                for repo in repos:
-                    if repo.get("error"):
-                        continue
-                    full_name = _repo_full_name(repo)
-                    if not full_name or full_name in candidates:
-                        continue
-                    candidates[full_name] = repo
-                    found_any = True
+        # Ordered passes. Each pass is a list of queries whose results are unioned;
+        # a pass that finds anything stops the escalation for this term.
+        #
+        # The relaxed pass deliberately splits the labelled-issue qualifiers into two
+        # queries instead of conjoining them: GitHub search has no OR across
+        # qualifiers, and requiring a repository to carry BOTH "good first issue" and
+        # "help wanted" labels starves small ecosystems (Elixir: 2 results conjoined
+        # vs 5 and 11 separately).
+        passes: list[list[str]] = [
+            [build_repo_query(tier, language=term, issue_qualifier=IssueQualifier.BOTH)],
+            [
+                build_repo_query(
+                    tier, language=term, relaxed=True,
+                    issue_qualifier=IssueQualifier.GOOD_FIRST,
+                ),
+                build_repo_query(
+                    tier, language=term, relaxed=True,
+                    issue_qualifier=IssueQualifier.HELP_WANTED,
+                ),
+            ],
+        ]
+
+        for queries in passes:
+            found_before_pass = len(candidates)
+
+            for query in queries:
+                for sort in ("help-wanted-issues", ""):
                     if len(candidates) >= MAX_CANDIDATE_REPOS:
                         break
-                if len(candidates) >= MAX_CANDIDATE_REPOS:
-                    break
-            # A strict pass that returned nothing at all means the relaxed retry is
-            # worth trying; a strict pass with any hits is trusted as-is.
-            if not relaxed and candidates:
+                    repos = await search_github_repos(
+                        query, github_token, sort=sort, per_page=25
+                    )
+                    for repo in repos:
+                        if repo.get("error"):
+                            continue
+                        full_name = _repo_full_name(repo)
+                        if not full_name or full_name in candidates:
+                            continue
+                        candidates[full_name] = repo
+                        if len(candidates) >= MAX_CANDIDATE_REPOS:
+                            break
+
+            if len(candidates) > found_before_pass:
                 break
+
+        if len(candidates) >= MAX_CANDIDATE_REPOS:
+            break
 
     return list(candidates.values())
 

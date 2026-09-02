@@ -195,12 +195,28 @@ def _relaxed_band(band: TierBand) -> TierBand:
     )
 
 
+class IssueQualifier(StrEnum):
+    """Which labelled-issue qualifiers a query should require.
+
+    `BOTH` conjoins good-first-issues and help-wanted-issues. That is a strong
+    approachability signal in a large ecosystem, but in a small one it is far too
+    strict: for Elixir, requiring both yields 2 repositories, while each on its own
+    yields 5 and 11. The relaxed pass therefore issues one query per qualifier and
+    unions the results, rather than demanding a repository carry both label types.
+    """
+
+    BOTH = "both"
+    GOOD_FIRST = "good_first"
+    HELP_WANTED = "help_wanted"
+
+
 def build_repo_query(
     tier: ExperienceTier,
     *,
     language: str = "",
     topic: str = "",
     relaxed: bool = False,
+    issue_qualifier: IssueQualifier = IssueQualifier.BOTH,
     today: date | None = None,
 ) -> str:
     """Build a GitHub repository-search query constrained to a tier's bands.
@@ -238,9 +254,11 @@ def build_repo_query(
 
     parts.append(f"pushed:>{pushed_since.isoformat()}")
 
-    if band.min_good_first_issues:
+    want_good_first = issue_qualifier in (IssueQualifier.BOTH, IssueQualifier.GOOD_FIRST)
+    want_help_wanted = issue_qualifier in (IssueQualifier.BOTH, IssueQualifier.HELP_WANTED)
+    if band.min_good_first_issues and want_good_first:
         parts.append(f"good-first-issues:>{band.min_good_first_issues}")
-    if band.min_help_wanted_issues:
+    if band.min_help_wanted_issues and want_help_wanted:
         parts.append(f"help-wanted-issues:>{band.min_help_wanted_issues}")
 
     # Archived, mirrored and template repos cannot meaningfully accept a PR.
