@@ -130,6 +130,17 @@ CI runs the same suite plus a frontend typecheck, lint, and build on every pull
 request — see `.github/workflows/ci.yml`. The frontend has no test runner yet;
 `MANUAL_TESTS.md` is the checklist for its behaviour.
 
+### Migrations
+
+`alembic upgrade head` is a **release step, not something the app does at startup**.
+Running migrations from application startup means every instance races the same DDL
+the moment you run more than one. Apply migrations once, before the new code starts
+serving.
+
+The backend does check on boot and logs an error if the database's revision is
+behind the code's — it never migrates, and never refuses to start, since the agent
+routes work without PostgreSQL.
+
 ---
 
 ## Project Structure
