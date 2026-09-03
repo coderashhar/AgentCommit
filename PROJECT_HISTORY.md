@@ -399,3 +399,68 @@ landed, in violation of AGENTS.md's history rule. Reconstructed from the commit 
   Other coordinator search paths may have the same gap.
 - End-to-end verification against real GitHub OAuth + Gemini is still unperformed;
   see `MANUAL_TESTS.md` (currently untracked).
+
+---
+
+## 2026-09-04 — Phase 2 Landed; Docs and Setup Reconciled
+
+#### Completed
+- Squash-merged PR #6 (`17ea434`), bringing CI, the orchestration tests, and the
+  `/commit` Suspense fix onto `main`. Phase 2 had been complete and green since
+  2 Sep but had never landed, so `main` still had no pipeline and a failing
+  `next build`.
+- Fixed Alembic: `alembic upgrade head` could not run in any configuration.
+  `alembic/env.py` builds an **async** engine via `async_engine_from_config`, but
+  `alembic.ini` configured the sync `postgresql://` driver — the command died on
+  `No module named 'psycopg2'` (psycopg2 is not, and need not be, a dependency).
+  `env.py` now normalizes `postgres://` / `postgresql://` onto `postgresql+asyncpg://`
+  and defaults to `app.config.settings.database_url`, so `.env` is the single source
+  of truth and `alembic.ini` no longer has to be hand-edited per environment.
+- Rebuilt `backend/.venv` on Python 3.12 — it had been a Python 3.9 environment
+  containing only pip and setuptools, so the suite ran locally only by accident,
+  against a separate interpreter that happened to have the dependencies.
+- Rewrote `ARCHITECTURE.md` §5 and §7, which still described the Phase 1 world:
+  §5 asserted PostgreSQL and GitHub MCP were "fully unwired" (both have been wired
+  since Phase 2) and §7 listed "no pytest, no CI anywhere in this repository" as a
+  known risk, next to 237 passing tests and a working workflow.
+- Added `ARCHITECTURE.md` §2.1, a table of all seven agent-backed routes with their
+  coordinator function, cache TTL, and fallback. §2 previously documented only the
+  profile flow, implying the three Phase 1 stages were the whole system.
+- Tracked `MANUAL_TESTS.md`, which `PROJECT_HISTORY.md` already cited as the
+  end-to-end checklist while it sat untracked in the working tree.
+
+#### Files Modified
+- `backend/alembic/env.py`, `backend/alembic.ini`
+- `ARCHITECTURE.md` (§1 stack table, §2.1 added, §5 rewritten, §6 plan cache row,
+  §7 rewritten, §7.1 added)
+- `README.md` (Python 3.12 requirement, `alembic upgrade head` step, a test-running
+  section, and the Next.js 16 / Gemini 2.5 Flash corrections)
+- `MANUAL_TESTS.md` (newly tracked)
+
+#### Decisions
+- Normalized **toward** asyncpg rather than adding psycopg2 and a sync engine. The
+  app is async end to end; adding a second driver to satisfy Alembic would mean two
+  connection stacks and two failure modes for one migration command.
+- Derived Alembic's default URL from `app.config.settings` instead of duplicating it
+  in `alembic.ini`. The previous split meant a developer editing `.env` got an app
+  and a migration runner pointed at different databases, silently.
+- Left the README's aspirational architecture diagram alone but corrected the two
+  factual stack claims. `ARCHITECTURE.md` §1 remains the place where divergence from
+  the README is recorded deliberately.
+
+#### Measurements
+- `pytest`: 236 passed, 1 skipped (integration, needs live credentials) — 237
+  collected. Previously 228 passed with 8 errors locally, because `aiosqlite` was
+  absent from the interpreter the suite actually ran under.
+- `alembic upgrade head` before the fix: `No module named 'psycopg2'` at engine
+  construction. After: reaches asyncpg authentication against localhost:5432.
+
+#### Known Issues / Follow-up Tasks
+- **The migration is runnable but nothing runs it.** `lifespan` in `main.py` is still
+  an empty placeholder and no release step invokes the upgrade. A fresh deployment
+  comes up with no schema.
+- `alembic upgrade head` has not been observed applying the revision to a real
+  database — Docker was unavailable, and the native PostgreSQL on this machine has
+  no `agentcommit` role. Verification stopped at "asyncpg connects and authenticates".
+- `api/saved.py` still makes two `GET /user` calls per request and omits the
+  empty-`login` guard on its GET and DELETE handlers — next up.

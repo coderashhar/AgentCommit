@@ -53,9 +53,9 @@ Powered by **Google Agent Development Kit (ADK)** with **Gemini 2.5 Pro**.
 
 | Layer          | Technology                                    |
 |----------------|-----------------------------------------------|
-| Frontend       | Next.js 15 · TypeScript · Tailwind CSS · shadcn/ui |
+| Frontend       | Next.js 16 · TypeScript · Tailwind CSS · shadcn/ui |
 | Backend        | FastAPI · Python 3.12+                        |
-| AI Framework   | Google ADK · Gemini 2.5 Pro                   |
+| AI Framework   | Google ADK · Gemini 2.5 Flash                 |
 | Database       | PostgreSQL · Redis                            |
 | Auth           | GitHub OAuth                                  |
 | MCP            | GitHub MCP Server                             |
@@ -95,11 +95,15 @@ docker compose up -d
 
 ### 4. Start the Backend
 
+Python **3.12** is required — `google-adk` and the async SQLAlchemy stack do not
+install on 3.9, which is still the default `python` on macOS.
+
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+alembic upgrade head        # create the schema (step 3 must be running)
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -112,6 +116,19 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to see the app.
+
+### 6. Run the Tests
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest                      # 236 pass, 1 skipped without live credentials
+pytest -m "not integration" # what CI runs — deselects that one explicitly
+```
+
+CI runs the same suite plus a frontend typecheck, lint, and build on every pull
+request — see `.github/workflows/ci.yml`. The frontend has no test runner yet;
+`MANUAL_TESTS.md` is the checklist for its behaviour.
 
 ---
 
