@@ -122,7 +122,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the app.
 ```bash
 cd backend
 source .venv/bin/activate
-pytest                      # 236 pass, 1 skipped without live credentials
+pytest                      # 313 pass, 1 skipped without live credentials
 pytest -m "not integration" # what CI runs — deselects that one explicitly
 ```
 

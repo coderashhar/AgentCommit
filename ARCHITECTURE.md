@@ -247,22 +247,29 @@ window.
   ~100s before falling through to the deterministic path. Phase 1 made landing on
   that path a non-regression (same tier bands, same scoring); neither phase fixes the
   underlying rate limit — see `PRD.md` §6.
-- **Nothing *invokes* the database migration.** `alembic upgrade head` now works
-  (§5), but no startup hook or release step calls it. A fresh deployment still comes
-  up with no schema, and every persistence route fails. This is the single largest
-  gap between "works locally" and "deployable".
-- **No rate limiting or request-size bounds.** `IssueDiscoveryRequest.repositories`
-  has no max length; a large list multiplies GitHub calls linearly. Only
-  `CommitMessageRequest` and `MentorChatRequest` carry field caps.
-- **`require_github_token` costs a live GitHub round-trip on every protected
-  request**, uncached. `api/saved.py` makes this worse: each of its three handlers
-  calls the dependency and then repeats the same `GET /user` inline to read `login`,
-  so a bookmark costs two round-trips against a rate-limited quota.
-- **Mentor sessions are process-local.** `agents/mentor_session.py` holds
-  conversations in a module-level dict with no eviction sweep — entries expire only
-  when looked up, so abandoned sessions persist for the process lifetime. Under more
-  than one worker, a follow-up question can land on a worker that has never seen the
-  conversation.
+- **Migrations are a release step, and nothing enforces that they ran.**
+  `alembic upgrade head` works (§5) and `lifespan` logs an error when the database's
+  revision is behind the code's, but the check only reports — it never migrates and
+  never refuses to boot, because the agent routes do not need PostgreSQL. A deployer
+  who skips the release command gets a loud startup line and failing persistence
+  routes, not a refusal to start.
+- **Validated tokens are cached for 5 minutes.** `resolve_github_identity` returns
+  the token and the login from one GitHub call, keyed by a sha256 of the token. The
+  trade is bounded staleness: a token revoked on GitHub keeps working here until the
+  entry expires. Only successes are cached, so a rejection is always re-checked.
+- **Rate limiting is a fixed window, and fails open.** 30 requests per minute per
+  login across the agent routes (`api/rate_limit.py`). Fixed windows admit up to 2x
+  the limit across a boundary, and an unreachable Redis lets every request through —
+  both deliberate, since the limiter exists to stop a runaway client rather than to
+  meter precisely, and a Redis blip must not become an outage.
+- **Mentor conversations cannot span workers or survive a restart.**
+  `agents/mentor_session.py` is bounded now (sweep plus a hard ceiling), but it is
+  still in-process *by necessity*: it maps to ADK session ids whose conversations
+  live in `coordinator.session_service`, an `InMemorySessionService`. Sharing the
+  mapping without sharing that service would be worse than not sharing it — a second
+  worker would read an id its own ADK store has never seen and skip priming the agent
+  with issue context. Making conversations durable starts by replacing
+  `InMemorySessionService`, not by moving this module.
 - **`coordinator.py` is 1,413 lines.** Thirty-three functions covering orchestration,
   LLM-path verification, merging, and fallbacks for all seven agents. It should be
   split before Phase 3 adds PR Review and Analytics on top of it.
@@ -273,8 +280,8 @@ window.
 ### 7.1 Test coverage, as it stands
 
 The Phase 1 version of this section read "no `tests/` directory, no pytest, no CI
-anywhere in this repository." That is closed on the backend: **237 tests** under
-`backend/tests/` (236 pass, 1 needs live credentials), and
+anywhere in this repository." That is closed on the backend: **314 tests** under
+`backend/tests/` (313 pass, 1 needs live credentials), and
 `.github/workflows/ci.yml` runs them plus a frontend typecheck/lint/build on every
 pull request. What remains:
 
