@@ -159,3 +159,73 @@ class TestBuildMentorAgent:
         a1 = build_mentor_agent("token-alice")
         a2 = build_mentor_agent("token-bob")
         assert a1 is not a2
+
+
+# ---------- Session store capacity ----------
+
+
+class TestMentorSessionCapacity:
+    """The store expired entries lazily on read, so a conversation nobody returned
+    to was never looked up again and sat in the dict for the life of the process."""
+
+    def setup_method(self):
+        import app.agents.mentor_session as ms
+
+        ms._sessions.clear()
+
+    def test_no_sweep_below_threshold(self):
+        import app.agents.mentor_session as ms
+
+        for i in range(10):
+            ms.store_session_id("alice", "owner", "repo", i, f"s{i}")
+        # Backdate them all; nothing should be swept yet because we are under threshold.
+        for entry in ms._sessions.values():
+            entry.created_at = time.monotonic() - 7200
+        ms.store_session_id("alice", "owner", "repo", 999, "s999")
+        assert len(ms._sessions) == 11
+
+    def test_sweep_drops_expired_once_over_threshold(self, monkeypatch):
+        import app.agents.mentor_session as ms
+
+        monkeypatch.setattr(ms, "SWEEP_THRESHOLD", 5)
+        for i in range(5):
+            ms.store_session_id("alice", "owner", "repo", i, f"s{i}")
+        for entry in ms._sessions.values():
+            entry.created_at = time.monotonic() - 7200
+
+        ms.store_session_id("alice", "owner", "repo", 100, "fresh")
+
+        assert ms.active_session_count() == 1
+        assert ms.get_session_id("alice", "owner", "repo", 100) == "fresh"
+
+    def test_live_sessions_survive_a_sweep(self, monkeypatch):
+        import app.agents.mentor_session as ms
+
+        monkeypatch.setattr(ms, "SWEEP_THRESHOLD", 3)
+        ms.store_session_id("alice", "owner", "repo", 1, "live")
+        for i in range(2, 5):
+            ms.store_session_id("alice", "owner", "repo", i, f"s{i}")
+            ms._sessions[f"alice:owner/repo#{i}"].created_at = time.monotonic() - 7200
+
+        ms.store_session_id("bob", "owner", "repo", 1, "also-live")
+
+        assert ms.get_session_id("alice", "owner", "repo", 1) == "live"
+        assert ms.get_session_id("bob", "owner", "repo", 1) == "also-live"
+
+    def test_hard_cap_evicts_oldest_when_all_are_live(self, monkeypatch):
+        """Sustained traffic must not grow the store without limit."""
+        import app.agents.mentor_session as ms
+
+        monkeypatch.setattr(ms, "SWEEP_THRESHOLD", 4)
+        monkeypatch.setattr(ms, "MAX_SESSIONS", 4)
+
+        for i in range(6):
+            ms.store_session_id("alice", "owner", "repo", i, f"s{i}")
+            # Stagger ages so "oldest" is well defined.
+            ms._sessions[f"alice:owner/repo#{i}"].created_at = time.monotonic() - (100 - i)
+
+        assert len(ms._sessions) <= ms.MAX_SESSIONS + 1
+        # The most recent write always survives.
+        assert ms.get_session_id("alice", "owner", "repo", 5) == "s5"
+        # The oldest is gone.
+        assert ms.get_session_id("alice", "owner", "repo", 0) is None

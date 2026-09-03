@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.api.github_auth import require_github_token
+from app.api.rate_limit import authorize_agent_request
 from app.models.schemas import (
     IssueDiscoveryRequest,
     IssueDiscoveryResponse,
@@ -29,7 +29,7 @@ async def discover_issues(
 
     Triggers the Issue Discovery Agent via Google ADK.
     """
-    token = await require_github_token(authorization)
+    token = (await authorize_agent_request(authorization)).token
 
     from app.agents.coordinator import run_issue_discovery
 
@@ -55,7 +55,7 @@ async def explain_issue(
 
     Triggers the Issue Explainer Agent via Google ADK.
     """
-    token = await require_github_token(authorization)
+    token = (await authorize_agent_request(authorization)).token
 
     from app.agents.coordinator import run_issue_explanation
 
@@ -81,7 +81,7 @@ async def generate_implementation_plan(
 
     Triggers the Implementation Planner Agent via Google ADK.
     """
-    token = await require_github_token(authorization)
+    token = (await authorize_agent_request(authorization)).token
 
     from app.agents.coordinator import run_implementation_plan
 

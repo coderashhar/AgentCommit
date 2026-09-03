@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.api.github_auth import require_github_token
+from app.api.rate_limit import authorize_agent_request
 from app.models.schemas import ProfileAnalysisRequest, ProfileAnalysisResponse
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ async def analyze_profile(
 
     Triggers the Profile Analyzer Agent via Google ADK.
     """
-    token = await require_github_token(authorization)
+    token = (await authorize_agent_request(authorization)).token
 
     # Import here to avoid circular imports during startup
     from app.agents.coordinator import run_profile_analysis

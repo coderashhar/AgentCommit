@@ -1,6 +1,25 @@
 """Pydantic models for API request/response validation."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+# Bounds for free-text request fields. Nothing below is a business rule — they exist
+# so a request cannot make the backend do unbounded work or build unbounded strings.
+# GitHub's own limits set the tight ones: logins are 39 characters, repository names
+# 100.
+Username = Annotated[str, StringConstraints(max_length=39)]
+RepoName = Annotated[str, StringConstraints(max_length=100)]
+RepoFullName = Annotated[str, StringConstraints(max_length=140)]
+ShortTag = Annotated[str, StringConstraints(max_length=60)]
+
+# Each named repository costs GitHub calls during issue discovery. The coordinator
+# already truncates to ISSUE_SOURCE_REPO_LIMIT (12) and the dashboard sends 10; this
+# is the outer wall, not the working limit.
+MAX_REQUEST_REPOS = 25
+
+# Skill lists come from profile analysis, which returns a handful of entries.
+MAX_SKILL_ITEMS = 50
 
 
 # ========================
@@ -9,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class GitHubAuthRequest(BaseModel):
     """Request body for GitHub OAuth callback."""
-    code: str = Field(..., description="GitHub OAuth authorization code")
+    code: str = Field(..., max_length=512, description="GitHub OAuth authorization code")
 
 
 class UserProfile(BaseModel):
@@ -39,7 +58,7 @@ class GitHubAuthResponse(BaseModel):
 
 class ProfileAnalysisRequest(BaseModel):
     """Request to analyze a GitHub profile."""
-    username: str = Field(..., description="GitHub username to analyze")
+    username: Username = Field(..., description="GitHub username to analyze")
 
 
 class ProfileAnalysisResponse(BaseModel):
@@ -61,10 +80,10 @@ class ProfileAnalysisResponse(BaseModel):
 
 class RepoRecommendationRequest(BaseModel):
     """Request for repository recommendations based on profile analysis."""
-    languages: list[str]
-    frameworks: list[str] = Field(default_factory=list)
-    experience_level: str = "beginner"
-    domains: list[str] = Field(default_factory=list)
+    languages: list[ShortTag] = Field(..., max_length=MAX_SKILL_ITEMS)
+    frameworks: list[ShortTag] = Field(default_factory=list, max_length=MAX_SKILL_ITEMS)
+    experience_level: ShortTag = "beginner"
+    domains: list[ShortTag] = Field(default_factory=list, max_length=MAX_SKILL_ITEMS)
 
 
 class RecommendedRepo(BaseModel):
@@ -98,9 +117,13 @@ class RepoRecommendationResponse(BaseModel):
 
 class IssueDiscoveryRequest(BaseModel):
     """Request to discover beginner-friendly issues."""
-    repositories: list[str] = Field(..., description="List of repo full names (owner/repo)")
-    languages: list[str] = Field(default_factory=list)
-    experience_level: str = "beginner"
+    repositories: list[RepoFullName] = Field(
+        ...,
+        max_length=MAX_REQUEST_REPOS,
+        description="List of repo full names (owner/repo)",
+    )
+    languages: list[ShortTag] = Field(default_factory=list, max_length=MAX_SKILL_ITEMS)
+    experience_level: ShortTag = "beginner"
 
 
 class DiscoveredIssue(BaseModel):
@@ -133,9 +156,9 @@ class IssueDiscoveryResponse(BaseModel):
 
 class IssueExplanationRequest(BaseModel):
     """Request to explain a specific GitHub issue."""
-    owner: str
-    repo: str
-    issue_number: int
+    owner: Username
+    repo: RepoName
+    issue_number: int = Field(..., ge=1)
 
 
 class IssueExplanationResponse(BaseModel):
@@ -169,9 +192,9 @@ class ImplementationStep(BaseModel):
 
 class ImplementationPlanRequest(BaseModel):
     """Request to generate an implementation plan for a GitHub issue."""
-    owner: str
-    repo: str
-    issue_number: int
+    owner: Username
+    repo: RepoName
+    issue_number: int = Field(..., ge=1)
 
 
 class ImplementationPlanResponse(BaseModel):
@@ -197,9 +220,9 @@ class CommitMessageRequest(BaseModel):
     """Request to generate a conventional commit message."""
     diff_text: str = Field("", max_length=10000, description="Git diff or code changes")
     change_description: str = Field(..., max_length=2000, description="Plain English description of the change")
-    repo_full_name: str = Field(..., description="owner/repo format")
-    issue_title: str = Field("", description="Title of the related GitHub issue, if any")
-    issue_number: int | None = Field(None, description="Related issue number for context")
+    repo_full_name: RepoFullName = Field(..., description="owner/repo format")
+    issue_title: str = Field("", max_length=500, description="Title of the related GitHub issue, if any")
+    issue_number: int | None = Field(None, ge=1, description="Related issue number for context")
 
 
 class CommitMessageResponse(BaseModel):
@@ -221,9 +244,9 @@ class CommitMessageResponse(BaseModel):
 
 class MentorChatRequest(BaseModel):
     """Request to send a message to the Mentor Agent."""
-    owner: str
-    repo: str
-    issue_number: int
+    owner: Username
+    repo: RepoName
+    issue_number: int = Field(..., ge=1)
     message: str = Field(..., max_length=2000, description="User's question or message")
 
 
@@ -239,10 +262,10 @@ class MentorChatResponse(BaseModel):
 
 class SaveIssueRequest(BaseModel):
     """Request to bookmark an issue."""
-    repo_full_name: str = Field(..., description="owner/repo format")
-    issue_number: int
-    title: str = ""
-    html_url: str = ""
+    repo_full_name: RepoFullName = Field(..., description="owner/repo format")
+    issue_number: int = Field(..., ge=1)
+    title: str = Field("", max_length=500)
+    html_url: str = Field("", max_length=500)
 
 
 class SavedIssueResponse(BaseModel):

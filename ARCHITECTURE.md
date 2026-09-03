@@ -1,7 +1,7 @@
 # AgentCommit — Architecture
 
-**Status:** Describes the system as built after Phase 1 stabilization, not as
-originally envisioned. Where reality diverges from `README.md`/`ROADMAP.md`, this
+**Status:** Describes the system as built after Phase 2, not as originally
+envisioned. Where reality diverges from `README.md`/`ROADMAP.md`, this
 document says so explicitly rather than silently matching the aspirational version.
 **Companion doc:** `PRD.md` covers product scope and rationale; this document is the
 technical design underneath it.
@@ -16,7 +16,7 @@ technical design underneath it.
 | LLM | Gemini 2.5 Pro | **gemini-2.5-flash** |
 | Backend | FastAPI, Python 3.12+ | Matches — FastAPI 0.115, Python 3.12 |
 | AI framework | Google ADK | Matches |
-| Database | PostgreSQL + Redis | Redis is live; **PostgreSQL is unwired** (§5) |
+| Database | PostgreSQL + Redis | Both live — Redis caches agent results, PostgreSQL stores profile analyses and saved issues (§5) |
 | Auth | GitHub OAuth | NextAuth v5 (Auth.js), not the backend's own `/api/auth` router (§4) |
 
 ## 2. Request flow
@@ -46,7 +46,30 @@ each stage's output feeding the next (`frontend/src/app/dashboard/page.tsx`). Re
 recommendation and issue discovery both follow the same shape as above, with one
 addition specific to them: **LLM-path verification** (§3.3).
 
-### 2.1 The `coordinator_agent` is dead code
+### 2.1 Agent entry points
+
+Phase 2 added four more agent-backed routes on the same shape as above — cache
+lookup, agent run, deterministic fallback. The full set:
+
+| Route | Coordinator function | Cached | Fallback |
+|---|---|---|---|
+| `POST /api/profile/analyze` | `run_profile_analysis` | 1h | `_fallback_profile_analysis` |
+| `POST /api/repos/recommend` | `run_repo_recommendation` | 30m | `_deterministic_repo_recommendation` |
+| `POST /api/issues/discover` | `run_issue_discovery` | 15m | `_deterministic_issue_discovery` |
+| `POST /api/issues/explain` | `run_issue_explanation` | 2h | `_fallback_issue_explanation` |
+| `POST /api/issues/plan` | `run_implementation_plan` | 2h | `_fallback_implementation_plan` |
+| `POST /api/mentor/chat` | `run_mentor_chat` | no — session-scoped | none — returns an explicit error |
+| `POST /api/commit/generate` | `run_commit_message` | no | `_fallback_commit_message` |
+
+The mentor is the one stateful flow: `agents/mentor_session.py` maps
+`{username}:{owner}/{repo}#{issue}` to a live ADK `session_id` so follow-up
+questions keep context. It deliberately has no fallback — a mentor that cannot
+reach the model should say so rather than answer from a keyword heuristic.
+
+`POST`, `GET`, and `DELETE /api/saved/issues` are the only routes that touch no
+agent at all; they read and write PostgreSQL directly.
+
+### 2.2 The `coordinator_agent` is dead code
 
 `app/agents/coordinator.py` used to construct a root `Agent` with
 `sub_agents=[profile_agent, repo_agent, issue_agent, explainer_agent]`, implying ADK
@@ -152,27 +175,46 @@ signature Gemini actually sees has no token parameter, so there is no way for it
 appear in the prompt or be echoed back by the model. Per-request agent construction
 is pure in-process object creation — no added latency.
 
-## 5. Deferred-by-design: PostgreSQL and GitHub MCP
+## 5. PostgreSQL and GitHub MCP, as wired in Phase 2
 
-Both exist in the codebase and are **fully unwired** — this is intentional, not an
-oversight left over from Phase 1.
+Both were deliberately left unwired through Phase 1. Phase 2 hit each trigger
+condition and connected them; this section describes what is actually on the request
+path today.
 
-- **PostgreSQL** (`app/database/`): `User`, `ProfileAnalysis`, `SavedIssue` models are
-  defined; nothing imports them at request time. The lifespan hook in `main.py` has
-  no startup/shutdown logic beyond a comment placeholder. No migrations exist. **Phase
-  2 trigger:** the first feature that needs a user's data to survive a page
-  refresh — saved issues, contribution history, "repos I've already looked at."
-  Nothing in Phase 1's scope needs that.
-- **GitHub MCP** (`app/mcp/`): `get_github_mcp_session`, `mcp_search_repositories`,
-  etc. are defined; nothing calls them. Every actual GitHub call in this codebase
-  goes through the plain `httpx`-based functions in `app/tools/github_tool.py`.
-  **Phase 2 trigger:** the first agent that needs to browse repository files rather
-  than just metadata — most likely the Implementation Planner Agent, which needs to
-  read source to propose a diff.
+- **PostgreSQL** (`app/database/`): `User`, `ProfileAnalysis`, `SavedIssue` are
+  defined in `models.py` and reached two ways. `api/saved.py` takes an
+  `AsyncSession` through the `get_session` FastAPI dependency for the bookmark
+  routes; `coordinator._persist_profile_analysis` opens `async_session` directly to
+  write each profile analysis as it is produced. The trigger was the one predicted —
+  saved issues needed to survive a page refresh.
+- **GitHub MCP** (`app/mcp/`): the hand-rolled `mcp.ClientSession` scaffolding is
+  gone, replaced by `build_github_mcp_toolset(github_token, tool_filter=...)`
+  returning ADK's native `MCPToolset`, whose stdio subprocess lifecycle the ADK
+  runner manages. `planner_agent.py:119` is the only caller, filtered to
+  `get_file_contents` and `search_code`. The trigger was the one predicted — the
+  Implementation Planner needed to read source, not just metadata.
 
-Do not wire either speculatively. Both add real operational surface (a stdio MCP
-subprocess per call today, with no session reuse; a connection pool and migration
-story for Postgres) that Phase 1's scope has no user-facing need for.
+Two properties of the MCP wiring are load-bearing and should survive any refactor.
+The toolset is built **per request**, because the token lives in the subprocess
+environment and a shared instance would mix one user's token into another's calls.
+And the token reaches the subprocess through `GITHUB_PERSONAL_ACCESS_TOKEN` rather
+than prompt text, which is the same property §4 establishes for the REST tools.
+
+Every other GitHub call in the codebase still goes through the plain `httpx`
+functions in `app/tools/github_tool.py`. MCP is additive — the planner keeps its
+REST tools as a deterministic fallback for when the subprocess is unavailable.
+
+**Partly wired: the migration runner.** One Alembic revision exists
+(`b28573c7b38c_initial_schema`). Until recently it could not be applied at all:
+`alembic/env.py` builds an *async* engine, but `alembic.ini` configured the sync
+`postgresql://` driver, so `alembic upgrade head` died on "The asyncio extension
+requires an async driver" (or, with the driver absent, `No module named 'psycopg2'`).
+`env.py` now normalizes any PostgreSQL URL onto `asyncpg` and takes its default from
+`app.config.settings`, so the command works against the docker-compose database.
+
+What is still missing is anything that *invokes* it. The `lifespan` hook in
+`main.py` remains an empty placeholder and no release step runs the upgrade, so
+schema creation is a manual act a deployer has to remember — see §7.
 
 ## 6. Caching
 
@@ -189,6 +231,7 @@ no explicit flush is needed.
 | Repos | languages, frameworks, domains, experience_level | 30m | Previously ignored frameworks/domains — two developers with the same languages but different frameworks used to collide |
 | Issues | full repository list, languages, experience_level | 15m | Previously truncated to `repositories[:3]` — two different 10-repo result sets sharing a top-3 used to collide |
 | Explanation | owner/repo, issue_number | 2h | |
+| Plan | owner/repo, issue_number | 2h | Added in Phase 2 alongside the Implementation Planner |
 
 Keys stay **profile-scoped, not user-scoped**, deliberately — two beginner
 Python/Django developers should share a cache entry. The original bug was
@@ -201,19 +244,56 @@ window.
 
 - **Gemini free-tier 429 exhaustion.** `_run_agent` retries up to 5 times with the
   API's own suggested delay plus a buffer, defaulting to 20s. A request can stall
-  ~100s before falling through to the deterministic path. This phase makes landing
-  on that path a non-regression (same tier bands, same scoring), not a fix for the
+  ~100s before falling through to the deterministic path. Phase 1 made landing on
+  that path a non-regression (same tier bands, same scoring); neither phase fixes the
   underlying rate limit — see `PRD.md` §6.
-- **No test harness.** There is no `tests/` directory, no pytest, no CI anywhere in
-  this repository. The ranking modules (`repo_ranking.py`, `issue_ranking.py`) are
-  written as pure functions with injectable `today`/`now` specifically so this is
-  cheap to close later — see `PRD.md`'s Phase 2 scope.
-- **No rate limiting or request-size bounds.** `IssueDiscoveryRequest.repositories`
-  has no max length; a large list multiplies GitHub calls linearly. Acceptable for
-  Phase 1's traffic; not acceptable indefinitely.
-- **`require_github_token` costs a live GitHub round-trip on every protected
-  request**, uncached. Adds latency and consumes quota under load.
-- **`source` on repo/issue responses (`agent` / `hybrid` / `deterministic`) is new
-  observability, not yet wired to any dashboard or alert** — it's there so the
-  fallback rate becomes measurable once Phase 2's analytics work happens, not because
-  anything consumes it today.
+- **Migrations are a release step, and nothing enforces that they ran.**
+  `alembic upgrade head` works (§5) and `lifespan` logs an error when the database's
+  revision is behind the code's, but the check only reports — it never migrates and
+  never refuses to boot, because the agent routes do not need PostgreSQL. A deployer
+  who skips the release command gets a loud startup line and failing persistence
+  routes, not a refusal to start.
+- **Validated tokens are cached for 5 minutes.** `resolve_github_identity` returns
+  the token and the login from one GitHub call, keyed by a sha256 of the token. The
+  trade is bounded staleness: a token revoked on GitHub keeps working here until the
+  entry expires. Only successes are cached, so a rejection is always re-checked.
+- **Rate limiting is a fixed window, and fails open.** 30 requests per minute per
+  login across the agent routes (`api/rate_limit.py`). Fixed windows admit up to 2x
+  the limit across a boundary, and an unreachable Redis lets every request through —
+  both deliberate, since the limiter exists to stop a runaway client rather than to
+  meter precisely, and a Redis blip must not become an outage.
+- **Mentor conversations cannot span workers or survive a restart.**
+  `agents/mentor_session.py` is bounded now (sweep plus a hard ceiling), but it is
+  still in-process *by necessity*: it maps to ADK session ids whose conversations
+  live in `coordinator.session_service`, an `InMemorySessionService`. Sharing the
+  mapping without sharing that service would be worse than not sharing it — a second
+  worker would read an id its own ADK store has never seen and skip priming the agent
+  with issue context. Making conversations durable starts by replacing
+  `InMemorySessionService`, not by moving this module.
+- **`coordinator.py` is 1,413 lines.** Thirty-three functions covering orchestration,
+  LLM-path verification, merging, and fallbacks for all seven agents. It should be
+  split before Phase 3 adds PR Review and Analytics on top of it.
+- **`source` on repo/issue responses (`agent` / `hybrid` / `deterministic`) is
+  observability nothing consumes yet** — it exists so the fallback rate becomes
+  measurable once the Analytics Agent is built.
+
+### 7.1 Test coverage, as it stands
+
+The Phase 1 version of this section read "no `tests/` directory, no pytest, no CI
+anywhere in this repository." That is closed on the backend: **314 tests** under
+`backend/tests/` (313 pass, 1 needs live credentials), and
+`.github/workflows/ci.yml` runs them plus a frontend typecheck/lint/build on every
+pull request. What remains:
+
+- **The frontend has no tests and no runner.** CI proves it compiles and lints;
+  nothing exercises `lib/api.ts` or the three stateful components (the dashboard's
+  three-stage pipeline, the mentor chat panel, the commit generator). Their
+  behavioural coverage is manual, in `MANUAL_TESTS.md`.
+- **One test is deselected in CI.** Integration-marked tests need live GitHub
+  credentials; run them locally with `pytest -m integration`.
+- **Python 3.12 is mandatory locally, not just in CI.** `google-adk` and the async
+  SQLAlchemy stack do not install on the 3.9 that macOS still puts on `PATH` as
+  `python`. `README.md` §4 now says `python3.12` explicitly; a bare `python -m venv`
+  produces an environment where nothing installs.
+- **End-to-end verification against real GitHub OAuth and Gemini has never been
+  performed.** `MANUAL_TESTS.md` is the checklist; no run of it has been recorded.

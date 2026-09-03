@@ -328,6 +328,54 @@ class TestRunIssueDiscovery:
         assert result.issues
 
     @pytest.mark.asyncio
+    async def test_language_lookup_bounded_by_repos_with_issues(
+        self, monkeypatch, no_cache, agent_fails
+    ):
+        """Language lookups must not scale with the request's repository list.
+
+        `_search_tier_issues` caps itself at ISSUE_SOURCE_REPO_LIMIT, but the language
+        lookup beside it used to receive the raw request field — so a caller could
+        make the backend issue one `fetch_repo` call per repository named, for repos
+        that produced no issues and whose language nothing would consult.
+        """
+        async def fake_issues(repo_full_name, github_token, labels="", **kwargs):
+            # Only one repository in the request actually has issues.
+            if repo_full_name != "acme/widget":
+                return []
+            return [
+                {
+                    "number": 1,
+                    "title": "Fix a typo",
+                    "html_url": "https://example.test/1",
+                    "labels": [{"name": "good first issue"}],
+                    "comments": 2,
+                    "body": "A small fix",
+                    "created_at": "2026-08-20T00:00:00Z",
+                    "updated_at": "2026-08-30T00:00:00Z",
+                    "assignee": None,
+                    "state": "open",
+                }
+            ]
+
+        fetched: list[str] = []
+
+        async def fake_repo(owner, repo, token):
+            fetched.append(f"{owner}/{repo}")
+            return make_repo(full_name=f"{owner}/{repo}")
+
+        monkeypatch.setattr(coordinator, "search_github_issues", fake_issues)
+        monkeypatch.setattr(coordinator, "fetch_repo", fake_repo)
+
+        many_repos = ["acme/widget"] + [f"acme/empty-{i}" for i in range(30)]
+        result = await coordinator.run_issue_discovery(
+            many_repos, ["Python"], "beginner", "tok"
+        )
+
+        assert result.issues
+        # Every repo fetched must be one that returned an issue.
+        assert set(fetched) <= {"acme/widget"}
+
+    @pytest.mark.asyncio
     async def test_empty_issue_result_not_cached(self, monkeypatch, no_cache, agent_fails):
         async def no_issues(repo_full_name, github_token, labels="", **kwargs):
             return []

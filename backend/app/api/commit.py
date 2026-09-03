@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Header, HTTPException
 
-from app.api.github_auth import require_github_token
+from app.api.rate_limit import authorize_agent_request
 from app.models.schemas import CommitMessageRequest, CommitMessageResponse
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ async def generate_commit_message(
     Triggers the Commit Message Agent via Google ADK. Falls back to a keyword
     heuristic if the agent is unavailable.
     """
-    token = await require_github_token(authorization)
+    token = (await authorize_agent_request(authorization)).token
 
     from app.agents.coordinator import run_commit_message
 

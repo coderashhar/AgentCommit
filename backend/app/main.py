@@ -1,5 +1,6 @@
 """AgentCommit Backend — FastAPI application entry point."""
 
+import logging
 import logging.config
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -9,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api import auth, profile, repos, issues, saved, mentor, commit
+
+logger = logging.getLogger(__name__)
 
 # Every module calls logging.getLogger(__name__), but without this call nothing was
 # ever configured — every logger.warning/logger.info in the app was silently
@@ -40,7 +43,17 @@ logging.config.dictConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application startup and shutdown events."""
-    # Startup: initialize database, redis, etc.
+    # Report, don't migrate. Schema changes are applied by a release command so that
+    # concurrent instances cannot race the same DDL; this only says, in one line at
+    # startup, whether the database matches the code. It never raises: the agent
+    # routes do not need PostgreSQL, so a schema problem must not take them down.
+    from app.database.schema_check import verify_schema_is_current
+
+    try:
+        await verify_schema_is_current()
+    except Exception:
+        logger.exception("Schema version check failed; continuing startup")
+
     yield
     # Shutdown: cleanup resources
 
