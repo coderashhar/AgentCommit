@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # Import Base so Alembic can introspect the ORM models for autogenerate.
+from app.config import settings
 from app.database.models import Base  # noqa: F401 — side-effect: registers all models
 
 # ---------------------------------------------------------------------------
@@ -31,16 +32,34 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # ---------------------------------------------------------------------------
-# Override sqlalchemy.url from environment if DATABASE_URL is set.
-# This lets `alembic upgrade head` in CI/prod pick up the right URL without
-# editing alembic.ini.
+# Resolve the database URL so `alembic upgrade head` works in CI/prod without
+# anyone editing alembic.ini.
 # ---------------------------------------------------------------------------
-database_url = os.environ.get("DATABASE_URL")
+def _async_url(url: str) -> str:
+    """Force the asyncpg driver onto a PostgreSQL URL.
+
+    `run_migrations_online` below builds an *async* engine, so the URL must name an
+    async driver. A bare `postgresql://` (the historical alembic.ini default, and the
+    form most hosting providers hand out) raises
+    "The asyncio extension requires an async driver" without this.
+    """
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
+# Precedence: DATABASE_URL, then the app's own settings, then alembic.ini. Deriving
+# the default from app.config keeps one source of truth, so a developer who edits
+# .env does not also have to edit alembic.ini.
+database_url = os.environ.get("DATABASE_URL") or settings.database_url
 if database_url:
-    # asyncpg URLs need the sync dialect for Alembic's sync migration runner;
-    # swap the driver so both the app (asyncpg) and Alembic (psycopg2 / sync)
-    # can coexist. In offline mode we emit SQL, so the URL is used as-is.
-    config.set_main_option("sqlalchemy.url", database_url)
+    # set_main_option runs the value through ConfigParser interpolation, so a literal
+    # "%" in a percent-encoded password has to be doubled or it raises here.
+    config.set_main_option("sqlalchemy.url", _async_url(database_url).replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
