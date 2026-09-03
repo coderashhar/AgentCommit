@@ -6,6 +6,9 @@ mentor_session keys conversations by username, so whatever the endpoint passes a
 middleware being CORS — and fall back to `f"user-{token[:8]}"`. GitHub tokens carry
 a fixed 4-character prefix (`gho_`, `ghu_`, `ghp_`), so that fallback was the prefix
 plus four characters for every user, and it changed whenever a token rotated.
+
+The endpoint now takes its identity from authorize_agent_request, which resolves the
+login and consumes the caller's rate-limit quota in one step.
 """
 
 import pytest
@@ -45,7 +48,7 @@ class TestMentorIdentity:
         async def fake_identity(authorization):
             return GitHubIdentity(token="gho_aaaabbbbcccc", username="octocat")
 
-        monkeypatch.setattr(mentor, "resolve_github_identity", fake_identity)
+        monkeypatch.setattr(mentor, "authorize_agent_request", fake_identity)
 
         await mentor.mentor_chat(_body(), authorization="Bearer gho_aaaabbbbcccc")
 
@@ -65,7 +68,7 @@ class TestMentorIdentity:
         async def fake_identity(authorization):
             return next(identities)
 
-        monkeypatch.setattr(mentor, "resolve_github_identity", fake_identity)
+        monkeypatch.setattr(mentor, "authorize_agent_request", fake_identity)
 
         await mentor.mentor_chat(_body(), authorization="Bearer gho_abcd1111")
         await mentor.mentor_chat(_body(), authorization="Bearer gho_abcd2222")
@@ -77,7 +80,7 @@ class TestMentorIdentity:
         async def fake_identity(authorization):
             return GitHubIdentity(token="gho_secrettoken", username="octocat")
 
-        monkeypatch.setattr(mentor, "resolve_github_identity", fake_identity)
+        monkeypatch.setattr(mentor, "authorize_agent_request", fake_identity)
 
         await mentor.mentor_chat(_body(), authorization="Bearer gho_secrettoken")
 
@@ -88,7 +91,7 @@ class TestMentorIdentity:
         async def fake_identity(authorization):
             return GitHubIdentity(token="gho_validated", username="octocat")
 
-        monkeypatch.setattr(mentor, "resolve_github_identity", fake_identity)
+        monkeypatch.setattr(mentor, "authorize_agent_request", fake_identity)
 
         await mentor.mentor_chat(_body(), authorization="Bearer gho_validated")
 
@@ -98,7 +101,7 @@ class TestMentorIdentity:
         async def fake_identity(authorization):
             raise HTTPException(status_code=401, detail="nope")
 
-        monkeypatch.setattr(mentor, "resolve_github_identity", fake_identity)
+        monkeypatch.setattr(mentor, "authorize_agent_request", fake_identity)
 
         with pytest.raises(HTTPException) as exc:
             await mentor.mentor_chat(_body(), authorization="Bearer bad")
