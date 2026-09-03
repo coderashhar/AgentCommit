@@ -591,7 +591,14 @@ async def _deterministic_issue_discovery(
     """Discover issues directly from GitHub labels when the agent is unavailable."""
     tier = ExperienceTier.from_experience_level(experience_level)
     raw_issues = await _search_tier_issues(repositories, tier, languages, github_token)
-    repo_languages = await _fetch_repo_languages(repositories, github_token)
+    # Look languages up only for repositories that actually produced an issue.
+    # Passing the raw request list here made this the one unbounded fan-out in the
+    # codebase: _search_tier_issues caps itself at ISSUE_SOURCE_REPO_LIMIT, but this
+    # call did not, so an N-repo request cost N language lookups for repos whose
+    # languages score_issue would never ask about.
+    repo_languages = await _fetch_repo_languages(
+        [repo_full_name for _, repo_full_name in raw_issues], github_token
+    )
 
     scored: list[tuple[IssueScore, dict, str]] = []
     for issue, repo_full_name in raw_issues:
@@ -665,8 +672,9 @@ async def _fetch_repo_languages(repo_full_names: list[str], github_token: str) -
 
     GitHub's single-issue endpoint (`fetch_issue_details`) never includes a nested
     repository object, so `score_issue`'s language-match signal would otherwise
-    always fall back to its neutral default. Bounded by the (already-capped)
-    candidate repo count, so this stays a handful of calls, not one per issue.
+    always fall back to its neutral default. Names are de-duplicated and callers pass
+    only repositories they already hold results for, so this stays a handful of
+    calls, not one per issue — never pass an unfiltered request field.
     """
     unique_names = list(dict.fromkeys(repo_full_names))
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
