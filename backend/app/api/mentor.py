@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Header, HTTPException
 
-from app.api.github_auth import resolve_github_identity
+from app.api.rate_limit import authorize_agent_request
 from app.models.schemas import MentorChatRequest, MentorChatResponse
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ async def mentor_chat(
     # The GitHub login is the conversation's identity. It has to be the real login:
     # mentor_session keys conversations by it, so two users who resolve to the same
     # value would read each other's conversation history.
-    identity = await resolve_github_identity(authorization)
+    identity = await authorize_agent_request(authorization)
 
     from app.agents.coordinator import run_mentor_chat
 
