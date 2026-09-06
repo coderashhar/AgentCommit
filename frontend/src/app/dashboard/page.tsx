@@ -171,7 +171,12 @@ export default function DashboardPage() {
       controller.abort();
       runningRef.current = false;
     };
-  }, [session, agentStep, runId]);
+    // `agentStep` is read above but must NOT be listed here — see the comment on this
+    // effect. `session` is excluded too: next-auth returns a fresh object identity on
+    // every refetch (window focus, poll, token refresh), which would abort a healthy
+    // in-flight pipeline just as surely. The two fields the pipeline actually needs
+    // are primitives, so they compare by value and stay stable across those refetches.
+  }, [session?.accessToken, session?.username, runId]);
 
   if (status === "loading") {
     return (
