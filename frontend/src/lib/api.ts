@@ -6,6 +6,7 @@
 
 import type {
   AuthResponse,
+  UserProfile,
   ProfileAnalysis,
   RepoRecommendationResponse,
   IssueDiscoveryResponse,
@@ -115,6 +116,19 @@ export async function exchangeGitHubCode(code: string): Promise<AuthResponse> {
 // ========================
 // Profile
 // ========================
+
+/**
+ * Fetch the signed-in user's GitHub profile (name, bio, repo/follower counts).
+ *
+ * Separate from analyzeProfile: this is a plain GitHub read, so it stays fast and
+ * keeps working when the agent path is rate-limited.
+ */
+export async function getCurrentUser(
+  token: string,
+  signal?: AbortSignal,
+): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/profile/me", { signal }, token);
+}
 
 /**
  * Analyze a GitHub user's profile to extract skills and experience.
