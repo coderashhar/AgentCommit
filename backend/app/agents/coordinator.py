@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from google.adk.agents import Agent
@@ -115,6 +116,12 @@ DOMAIN_KEYWORDS = {
 
 # Verification / deterministic-search tuning.
 VERIFY_CONCURRENCY = 5
+
+# Total wall-clock time a single agent call may spend sleeping on 429s before it
+# gives up and lets the caller use its deterministic fallback. Every agent has one,
+# and they answer in about a second, so waiting longer than this trades a
+# good-enough answer for a blank screen.
+AGENT_RETRY_BUDGET_SECONDS = 30.0
 MIN_REPO_RESULTS = 5
 MAX_REPO_RESULTS = 10
 MAX_CANDIDATE_REPOS = MAX_REPO_RESULTS * 2
@@ -154,21 +161,26 @@ async def _run_agent(
     user_message: str,
     session_id: str,
     max_retries: int = 5,
+    retry_budget_seconds: float = AGENT_RETRY_BUDGET_SECONDS,
 ) -> str:
     """Run an ADK agent with a user message and return the text response.
 
-    Automatically retries on 429 RESOURCE_EXHAUSTED errors with the delay
-    specified by the Gemini API, plus a small buffer.
+    Retries 429 RESOURCE_EXHAUSTED using the delay Gemini itself suggests, but only
+    while the total time spent waiting stays inside `retry_budget_seconds`.
 
     Args:
         agent: The ADK agent to run.
         user_message: The message/instruction to send.
         session_id: Unique session identifier.
         max_retries: Maximum number of retries on rate limit errors.
+        retry_budget_seconds: Total wall-clock time this call may spend waiting on
+            rate limits before giving up and letting the caller fall back.
 
     Returns:
         The agent's text response.
     """
+    started = time.monotonic()
+
     for attempt in range(max_retries + 1):
         try:
             runner = Runner(
@@ -208,6 +220,23 @@ async def _run_agent(
 
             if is_rate_limit and attempt < max_retries:
                 delay = _extract_retry_delay(error_str) + 2.0  # add buffer
+                elapsed = time.monotonic() - started
+
+                # Gemini's suggested delay scales with how exhausted the quota is: a
+                # brief burst asks for a second or two, a spent free-tier request
+                # quota asks for nearly a minute. Sleeping through the latter five
+                # times held a single agent call for ~5 minutes, and the dashboard
+                # runs three in sequence — a quarter of an hour on a blank screen for
+                # a result the deterministic path produces in about a second.
+                if elapsed + delay > retry_budget_seconds:
+                    logger.warning(
+                        "Rate limited; the suggested %.1fs wait would exceed the %.0fs "
+                        "retry budget (%.1fs already spent). Giving up on the agent and "
+                        "letting the caller fall back.",
+                        delay, retry_budget_seconds, elapsed,
+                    )
+                    raise
+
                 logger.warning(
                     "Rate limited (attempt %d/%d). Waiting %.1fs before retry...",
                     attempt + 1, max_retries, delay,
