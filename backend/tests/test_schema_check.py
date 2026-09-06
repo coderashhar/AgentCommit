@@ -69,6 +69,27 @@ class TestVerifySchemaIsCurrent:
             await verify_schema_is_current()  # must not raise
         assert [r for r in caplog.records if r.levelno >= logging.ERROR]
 
+    async def test_driver_level_error_is_reported_not_raised(
+        self, monkeypatch, head, caplog
+    ):
+        """asyncpg raises its own exceptions, not SQLAlchemyError, on connect failures.
+
+        A missing role or wrong host surfaces as e.g.
+        asyncpg.exceptions.InvalidAuthorizationSpecificationError, which escaped the
+        original narrow `except SQLAlchemyError` and reached the caller as the
+        traceback this check exists to prevent.
+        """
+        class _DriverError(Exception):
+            pass
+
+        _set_current(monkeypatch, error=_DriverError('role "agentcommit" does not exist'))
+        with caplog.at_level(logging.INFO, logger="app.database.schema_check"):
+            await verify_schema_is_current()  # must not raise
+
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert "_DriverError" in caplog.text
+        assert "DATABASE_URL" in caplog.text
+
     async def test_no_head_revision_is_a_silent_noop(self, monkeypatch, caplog):
         """With no migration scripts readable there is nothing to compare against."""
         monkeypatch.setattr(schema_check, "expected_head_revision", lambda: None)
