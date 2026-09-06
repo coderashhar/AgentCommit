@@ -32,6 +32,14 @@ class Settings(BaseSettings):
         "env_file": (".env", "../.env"),
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
+        # The root .env is shared with the frontend — it carries AUTH_GITHUB_ID,
+        # AUTH_SECRET and friends, which NextAuth reads and this app has no use for.
+        # pydantic-settings forbids unknown keys by default, so without this the
+        # backend raises ValidationError at import time and never binds its port:
+        # following README.md verbatim produced a server that could not start.
+        # It also echoed the offending values — including the OAuth client secret —
+        # into the traceback.
+        "extra": "ignore",
     }
 
 
