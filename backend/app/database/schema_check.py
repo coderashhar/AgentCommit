@@ -15,7 +15,6 @@ import logging
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.database.connection import async_session
 
@@ -51,11 +50,15 @@ async def verify_schema_is_current() -> None:
 
     try:
         current = await current_database_revision()
-    except SQLAlchemyError as e:
-        # Covers both "no such table" (never migrated) and an unreachable database.
+    except Exception as e:
+        # Deliberately broad. SQLAlchemy wraps most failures in SQLAlchemyError, but
+        # connection-time errors from the asyncpg driver — a wrong host, a missing
+        # role — surface as asyncpg exceptions instead and would otherwise escape a
+        # narrower clause, turning this report into the traceback it exists to avoid.
         logger.error(
-            "Could not read the database schema version: %s. "
-            "If this deployment is new, run `alembic upgrade head` before serving traffic.",
+            "Could not read the database schema version: %s: %s. "
+            "Check DATABASE_URL, then run `alembic upgrade head` from backend/.",
+            type(e).__name__,
             str(e),
         )
         return
