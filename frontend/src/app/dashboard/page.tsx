@@ -11,7 +11,7 @@ import { RepoRecommendations } from "@/components/dashboard/repo-recommendations
 import { IssueList } from "@/components/dashboard/issue-list";
 import { Button } from "@/components/ui/button";
 import { Bot, Loader2 } from "lucide-react";
-import { analyzeProfile, getRecommendedRepos, discoverIssues } from "@/lib/api";
+import { getCurrentUser, analyzeProfile, getRecommendedRepos, discoverIssues } from "@/lib/api";
 import type {
   UserProfile,
   ProfileAnalysis,
@@ -43,6 +43,9 @@ export default function DashboardPage() {
   // session's GitHub login normalization; tracked separately so it can override the
   // session-derived profile without re-introducing a setState-in-effect.
   const [analyzedUsername, setAnalyzedUsername] = useState<string | null>(null);
+  // The real GitHub profile (bio, repo/follower/following counts). The session only
+  // carries name, image and login, so without this the profile card renders zeros.
+  const [githubProfile, setGithubProfile] = useState<UserProfile | null>(null);
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysis | null>(null);
   const [repos, setRepos] = useState<RecommendedRepo[]>([]);
   const [issues, setIssues] = useState<DiscoveredIssue[]>([]);
@@ -69,25 +72,50 @@ export default function DashboardPage() {
     }
   }, [status, router]);
 
-  // Derived directly from session data on each render — no effect needed, since
-  // there's nothing here to synchronize against an external system.
+  // Fetch the GitHub profile behind the card. Kept in its own effect, independent of
+  // the agent pipeline: it is a plain GitHub read, so it should still populate when
+  // the agent path is rate-limited, and it must not be torn down by the pipeline's
+  // AbortController.
+  useEffect(() => {
+    const token = session?.accessToken;
+    if (!token) return;
+
+    const controller = new AbortController();
+
+    getCurrentUser(token, controller.signal)
+      .then(setGithubProfile)
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        // Non-fatal: the card falls back to session values and the pipeline is
+        // unaffected, so this must not surface as a dashboard-wide error.
+        console.error("Could not load GitHub profile:", err);
+      });
+
+    return () => controller.abort();
+  }, [session?.accessToken]);
+
+  // Derived on each render from the session plus the fetched profile — no effect
+  // needed, since there's nothing here to synchronize against an external system.
   const userProfile: UserProfile | null = useMemo(() => {
     if (!session?.user) return null;
-    const username = analyzedUsername ?? session.username ?? session.user.name ?? "";
+    const username =
+      githubProfile?.username ?? analyzedUsername ?? session.username ?? session.user.name ?? "";
     return {
       username,
-      name: session.user.name ?? "",
-      avatar_url: session.user.image ?? "",
-      bio: "",
-      public_repos: 0,
-      followers: 0,
-      following: 0,
-      html_url: `https://github.com/${username}`,
-      company: null,
-      location: null,
-      blog: null,
+      // Session values are the fallback while the profile request is in flight, or
+      // if it failed — the card renders either way.
+      name: githubProfile?.name || session.user.name || "",
+      avatar_url: githubProfile?.avatar_url || session.user.image || "",
+      bio: githubProfile?.bio ?? "",
+      public_repos: githubProfile?.public_repos ?? 0,
+      followers: githubProfile?.followers ?? 0,
+      following: githubProfile?.following ?? 0,
+      html_url: githubProfile?.html_url || `https://github.com/${username}`,
+      company: githubProfile?.company ?? null,
+      location: githubProfile?.location ?? null,
+      blog: githubProfile?.blog ?? null,
     };
-  }, [session, analyzedUsername]);
+  }, [session, analyzedUsername, githubProfile]);
 
   // Run the agent pipeline when session is ready.
   //
