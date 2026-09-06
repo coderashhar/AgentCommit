@@ -100,7 +100,10 @@ export default function IssueDetailPage() {
       cancelled = true;
       controller.abort();
     };
-  }, [session, status, owner, repo, issueNumber, hasValidParams, router, retryToken]);
+    // Depend on the token itself, not the session object: next-auth hands back a new
+    // object identity on every refetch (window focus, poll, token refresh), and each
+    // one would abort the in-flight explanation and re-request it.
+  }, [session?.accessToken, status, owner, repo, issueNumber, hasValidParams, router, retryToken]);
 
   const fetchPlan = async () => {
     if (!session?.accessToken || !hasValidParams) return;
